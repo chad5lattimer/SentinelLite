@@ -1,0 +1,10 @@
+# SentinelLite dependencies
+#
+# Kept intentionally minimal per PROJECT_SPEC.md section 4.3. Everything
+# else the application needs (hashlib, pathlib, json, csv, sqlite3,
+# logging, datetime, threading, queue, dataclasses, typing, os, sys) comes
+# from the Python 3.12+ standard library.
+
+customtkinter>=5.2
+pytest>=8.0
+pyinstaller>=6.0
