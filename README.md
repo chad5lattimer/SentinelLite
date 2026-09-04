@@ -8,9 +8,11 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) complete. The application launches with a
-> basic window shell; filesystem scanning, baselines, and reporting land in
-> subsequent runs. See [`status/`](status/) for per-run progress notes.
+> **Status:** Run 2 (Hashing and Filesystem Engine) complete. The application
+> launches with a basic window shell and now has a working core engine that
+> can recursively enumerate a directory and compute SHA-256 hashes; baseline
+> storage, scanning/comparison, GUI wiring, and reporting land in subsequent
+> runs. See [`status/`](status/) for per-run progress notes.
 
 ## Requirements
 
@@ -64,7 +66,7 @@ This can be overridden for development or testing with the
 sentinellite/
 ├── app.py              # Application entry point
 ├── config.py           # Metadata, paths, logging configuration
-├── core/                # Hashing, filesystem, baseline, scan engine (security logic)
+├── core/                 # Hashing, filesystem, baseline, scan engine (security logic)
 ├── storage/              # SQLite database + repository layer
 ├── gui/                 # CustomTkinter GUI (presentation only)
 ├── reports/              # CSV/JSON export
