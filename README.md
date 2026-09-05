@@ -8,9 +8,11 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) complete. The application launches with a
-> basic window shell; filesystem scanning, baselines, and reporting land in
-> subsequent runs. See [`status/`](status/) for per-run progress notes.
+> **Status:** Run 2 (Hashing and Filesystem Engine) complete. The
+> application launches with a basic window shell and can recursively hash
+> a directory's files under the hood; baselines, scan comparison, and GUI
+> wiring land in subsequent runs. See [`status/`](status/) for per-run
+> progress notes.
 
 ## Requirements
 
