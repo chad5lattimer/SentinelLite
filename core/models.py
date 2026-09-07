@@ -57,3 +57,32 @@ class FileError:
 
     path: str
     message: str
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """A saved snapshot of a monitored directory's file state.
+
+    This is the trust reference that future scans compare against
+    (PROJECT_SPEC.md section 6.2 and section 17.2). ``files`` holds one
+    ``FileRecord`` per successfully hashed file at the time the baseline
+    was created; files that could not be read are excluded here and
+    reported separately (see core.baseline.create_baseline).
+
+    Attributes:
+        baseline_id: Database identifier, or ``None`` for a baseline that
+            has not been persisted yet.
+        created_at: ISO-8601 UTC timestamp of when the baseline was
+            created.
+        root_directory: Absolute path to the directory that was baselined.
+        application_version: SentinelLite version that created the
+            baseline.
+        files: The baselined files, with paths relative to
+            ``root_directory``.
+    """
+
+    baseline_id: int | None
+    created_at: str
+    root_directory: str
+    application_version: str
+    files: tuple[FileRecord, ...]
