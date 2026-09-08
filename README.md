@@ -8,13 +8,15 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation), Run 2 (Hashing and Filesystem Engine),
-> Run 3 (Baseline System), and Run 4 (Comparison and Scan Engine) complete.
+> **Status:** Run 1 (Foundation) through Run 5 (GUI Integration) complete.
 > The core engine can recursively enumerate a directory, compute SHA-256
 > hashes, create/save/load a baseline, run a scan that classifies every
 > file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and persist scan history
-> in a local SQLite database. GUI wiring and reporting land in subsequent
-> runs. See [`status/`](status/) for per-run progress notes.
+> in a local SQLite database. The CustomTkinter GUI is now wired to that
+> engine end to end: pick a folder, create a baseline, run a scan on a
+> background thread (the window never freezes), and view/filter results
+> in a summary + table view. CSV/JSON export and optional scheduling land
+> in Run 6. See [`status/`](status/) for per-run progress notes.
 
 ## Requirements
 
@@ -49,6 +51,12 @@ pip install -r requirements.txt
 python app.py
 pytest
 ```
+
+`tkinter` (needed by `customtkinter`) is part of the Python standard
+library but is packaged separately by most Linux distributions -- e.g.
+`sudo apt install python3-tk` on Debian/Ubuntu. Without it, the GUI
+modules and their tests are skipped automatically (core/storage tests
+are unaffected) rather than failing.
 
 ## Application Data
 

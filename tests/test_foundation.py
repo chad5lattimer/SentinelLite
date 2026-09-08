@@ -72,7 +72,7 @@ def test_configure_logging_creates_log_file(tmp_path):
         config._LOGGING_CONFIGURED = False
 
 
-def test_main_window_builds_and_closes():
+def test_main_window_builds_and_closes(tmp_path, monkeypatch):
     tk = pytest.importorskip("tkinter")
     try:
         probe = tk.Tk()
@@ -80,13 +80,25 @@ def test_main_window_builds_and_closes():
     except tk.TclError:
         pytest.skip("No display available for GUI test.")
 
-    from gui.main_window import MainWindow
+    import config
+    from gui import main_window
 
-    window = MainWindow()
+    # Point the window at a throwaway database rather than the real
+    # per-user application data directory (Run 5 opens a database
+    # connection on construction; earlier runs did not).
+    test_paths = config.AppPaths.resolve(base_dir=tmp_path / "SentinelLiteData")
+    monkeypatch.setattr(main_window, "PATHS", test_paths)
+
+    window = main_window.MainWindow()
     try:
         window.update_idletasks()
         assert window.title() == "SentinelLite - File Integrity Monitor"
         assert window.status_label.cget("text") == "Select a folder to begin."
-        assert str(window.change_folder_button.cget("state")) == "disabled"
+        # Folder selection is available as soon as the window opens (Run 5:
+        # GUI Integration) -- only baseline/scan actions require a folder
+        # or baseline to be selected first (PROJECT_SPEC.md section 24).
+        assert str(window.change_folder_button.cget("state")) == "normal"
+        assert str(window.create_baseline_button.cget("state")) == "disabled"
+        assert str(window.scan_now_button.cget("state")) == "disabled"
     finally:
-        window.destroy()
+        window._on_close()
