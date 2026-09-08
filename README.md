@@ -9,11 +9,12 @@ See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
 > **Status:** Run 1 (Foundation), Run 2 (Hashing and Filesystem Engine),
-> and Run 3 (Baseline System) complete. The core engine can recursively
-> enumerate a directory, compute SHA-256 hashes, and create/save/load a
-> baseline in a local SQLite database; scanning/comparison and GUI wiring
-> land in subsequent runs. See [`status/`](status/) for per-run progress
-> notes.
+> Run 3 (Baseline System), and Run 4 (Comparison and Scan Engine) complete.
+> The core engine can recursively enumerate a directory, compute SHA-256
+> hashes, create/save/load a baseline in a local SQLite database, and scan
+> a directory against a baseline to detect new, modified, deleted, and
+> unchanged files (with results persisted as scan history); GUI wiring
+> lands in Run 5. See [`status/`](status/) for per-run progress notes.
 
 ## Requirements
 
