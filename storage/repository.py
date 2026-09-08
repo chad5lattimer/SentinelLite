@@ -1,21 +1,22 @@
-"""Baseline data-access layer for SentinelLite.
+"""Baseline and scan-history data-access layer for SentinelLite.
 
-Per PROJECT_SPEC.md section 28 (Run 3): plain SQL read/write functions over
-the ``baselines`` and ``baseline_files`` tables (see ``storage.database``
-for the schema). This module has no hashing/filesystem logic and no GUI
-dependency -- it only translates between ``core.models.FileRecord`` /
-baseline metadata and SQLite rows.
-
-Scan-history persistence (``scans`` / ``scan_results``) is deferred to
-Run 4 (Comparison and Scan Engine), per the scope-control rule.
+Per PROJECT_SPEC.md section 28 (Run 3) and section 29 (Run 4): plain SQL
+read/write functions over the ``baselines``/``baseline_files`` and
+``scans``/``scan_results`` tables (see ``storage.database`` for the
+schema). This module has no hashing/filesystem/comparison logic and no GUI
+dependency -- it only translates between ``core`` dataclasses and SQLite
+rows.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable, NamedTuple
+from typing import TYPE_CHECKING, Iterable, NamedTuple
 
-from core.models import FileRecord
+from core.models import FileRecord, ScanStatus
+
+if TYPE_CHECKING:
+    from core.scanner import ScanResult
 
 
 class BaselineMetadata(NamedTuple):
@@ -107,6 +108,137 @@ def get_baseline_files(connection: sqlite3.Connection, baseline_id: int) -> list
             sha256=row["sha256"],
             size=row["size"],
             modified_time=row["modified_time"],
+        )
+        for row in rows
+    ]
+
+
+class ScanMetadata(NamedTuple):
+    """Metadata and summary counts for a stored scan, without per-file results."""
+
+    scan_id: int
+    baseline_id: int
+    started_at: str
+    completed_at: str | None
+    modified_count: int
+    new_count: int
+    deleted_count: int
+    unchanged_count: int
+    error_count: int
+
+
+def insert_scan(
+    connection: sqlite3.Connection,
+    *,
+    baseline_id: int,
+    started_at: str,
+    completed_at: str | None,
+    modified_count: int,
+    new_count: int,
+    deleted_count: int,
+    unchanged_count: int,
+    error_count: int,
+    results: Iterable["ScanResult"],
+) -> int:
+    """Persist a completed scan and its per-file results as scan history.
+
+    Per PROJECT_SPEC.md section 14, every scan is recorded against the
+    baseline it was compared to, so scan history accumulates over time
+    rather than being overwritten.
+
+    Returns:
+        The new scan's ``id``.
+    """
+    with connection:
+        cursor = connection.execute(
+            "INSERT INTO scans "
+            "(baseline_id, started_at, completed_at, modified_count, new_count, "
+            "deleted_count, unchanged_count, error_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                baseline_id,
+                started_at,
+                completed_at,
+                modified_count,
+                new_count,
+                deleted_count,
+                unchanged_count,
+                error_count,
+            ),
+        )
+        scan_id = cursor.lastrowid
+
+        connection.executemany(
+            "INSERT INTO scan_results "
+            "(scan_id, relative_path, status, baseline_hash, current_hash, size, error_message) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    scan_id,
+                    result.path,
+                    result.status.value,
+                    result.baseline_hash,
+                    result.current_hash,
+                    result.size,
+                    result.error_message,
+                )
+                for result in results
+            ),
+        )
+
+    return scan_id
+
+
+def get_scan_results(connection: sqlite3.Connection, scan_id: int) -> list["ScanResult"]:
+    """Return every stored per-file result for ``scan_id``, in insertion order."""
+    # Imported locally to avoid a circular import at module load time --
+    # core.scanner imports this module for persistence.
+    from core.scanner import ScanResult
+
+    rows = connection.execute(
+        "SELECT relative_path, status, baseline_hash, current_hash, size, error_message "
+        "FROM scan_results WHERE scan_id = ? ORDER BY id",
+        (scan_id,),
+    ).fetchall()
+    return [
+        ScanResult(
+            path=row["relative_path"],
+            status=ScanStatus(row["status"]),
+            baseline_hash=row["baseline_hash"],
+            current_hash=row["current_hash"],
+            size=row["size"],
+            error_message=row["error_message"],
+        )
+        for row in rows
+    ]
+
+
+def list_scans(connection: sqlite3.Connection, baseline_id: int | None = None) -> list[ScanMetadata]:
+    """Return scan history, most recent first, optionally filtered to one baseline."""
+    if baseline_id is None:
+        rows = connection.execute(
+            "SELECT id, baseline_id, started_at, completed_at, modified_count, new_count, "
+            "deleted_count, unchanged_count, error_count FROM scans ORDER BY id DESC"
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            "SELECT id, baseline_id, started_at, completed_at, modified_count, new_count, "
+            "deleted_count, unchanged_count, error_count FROM scans "
+            "WHERE baseline_id = ? ORDER BY id DESC",
+            (baseline_id,),
+        ).fetchall()
+
+    return [
+        ScanMetadata(
+            scan_id=row["id"],
+            baseline_id=row["baseline_id"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            modified_count=row["modified_count"],
+            new_count=row["new_count"],
+            deleted_count=row["deleted_count"],
+            unchanged_count=row["unchanged_count"],
+            error_count=row["error_count"],
         )
         for row in rows
     ]
