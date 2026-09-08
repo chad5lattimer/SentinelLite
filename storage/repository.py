@@ -76,6 +76,22 @@ def get_latest_baseline_id(connection: sqlite3.Connection) -> int | None:
     return row["id"] if row is not None else None
 
 
+def get_latest_baseline_id_for_directory(
+    connection: sqlite3.Connection, root_directory: str
+) -> int | None:
+    """Return the id of the most recent baseline for an exact ``root_directory``.
+
+    Used by the GUI (Run 5) so switching between two previously-baselined
+    monitored folders finds each folder's own baseline, rather than only
+    ever considering the single most recently created baseline overall.
+    """
+    row = connection.execute(
+        "SELECT id FROM baselines WHERE root_directory = ? ORDER BY id DESC LIMIT 1",
+        (root_directory,),
+    ).fetchone()
+    return row["id"] if row is not None else None
+
+
 def get_baseline_metadata(
     connection: sqlite3.Connection, baseline_id: int
 ) -> BaselineMetadata | None:

@@ -40,6 +40,7 @@ __all__ = [
     "create_baseline",
     "save_baseline",
     "load_baseline",
+    "find_baseline_for_directory",
 ]
 
 
@@ -181,3 +182,24 @@ def load_baseline(connection: sqlite3.Connection, baseline_id: int | None = None
         files=tuple(files),
         baseline_id=metadata.baseline_id,
     )
+
+
+def find_baseline_for_directory(connection: sqlite3.Connection, root_directory: Path | str) -> Baseline | None:
+    """Return the most recent baseline whose root directory matches, if any.
+
+    ``root_directory`` is compared against stored baselines using its
+    resolved (absolute, symlink-free) form. Used by the GUI (Run 5) when a
+    user selects a monitored folder: SentinelLite allows switching between
+    several previously-baselined folders, and each should find its own most
+    recent baseline rather than only the single most recent baseline
+    overall (PROJECT_SPEC.md section 24: "Folder selected, no baseline" vs.
+    "Baseline exists" must be judged per-folder).
+    """
+    resolved = str(Path(root_directory).resolve())
+    baseline_id = repository.get_latest_baseline_id_for_directory(connection, resolved)
+    if baseline_id is None:
+        return None
+    try:
+        return load_baseline(connection, baseline_id)
+    except BaselineNotFoundError:
+        return None

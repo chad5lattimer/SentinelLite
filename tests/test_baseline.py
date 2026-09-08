@@ -20,6 +20,7 @@ from core.baseline import (
     Baseline,
     BaselineNotFoundError,
     create_baseline,
+    find_baseline_for_directory,
     load_baseline,
     save_baseline,
 )
@@ -163,6 +164,38 @@ def test_create_baseline_excludes_unreadable_files(tmp_path):
 
     assert {record.path for record in baseline.files} == {"readable.txt"}
     assert {error.path for error in errors} == {"blocked.txt"}
+
+
+def test_find_baseline_for_directory_matches_per_folder(tmp_path):
+    """GUI folder-switching (PROJECT_SPEC.md section 24) needs each
+    monitored folder to find its own most recent baseline, not just the
+    single most recent baseline overall."""
+    dir_a = tmp_path / "A"
+    dir_a.mkdir()
+    _write(dir_a / "a.txt", b"one")
+    dir_b = tmp_path / "B"
+    dir_b.mkdir()
+    _write(dir_b / "b.txt", b"two")
+    db_path = tmp_path / "sentinellite.db"
+
+    with connect(db_path) as conn:
+        baseline_a, _ = create_baseline(dir_a)
+        saved_a = save_baseline(conn, baseline_a)
+
+        baseline_b, _ = create_baseline(dir_b)
+        saved_b = save_baseline(conn, baseline_b)
+
+        # dir_b's baseline is the most recent overall, but dir_a must still
+        # resolve to its own baseline, not dir_b's.
+        found_a = find_baseline_for_directory(conn, dir_a)
+        assert found_a is not None
+        assert found_a.baseline_id == saved_a.baseline_id
+
+        found_b = find_baseline_for_directory(conn, dir_b)
+        assert found_b is not None
+        assert found_b.baseline_id == saved_b.baseline_id
+
+        assert find_baseline_for_directory(conn, tmp_path / "NoBaselineHere") is None
 
 
 def test_baseline_file_count_property():

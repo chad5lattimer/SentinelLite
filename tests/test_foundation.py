@@ -72,8 +72,9 @@ def test_configure_logging_creates_log_file(tmp_path):
         config._LOGGING_CONFIGURED = False
 
 
-def test_main_window_builds_and_closes():
+def test_main_window_builds_and_closes(tmp_path):
     tk = pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
     try:
         probe = tk.Tk()
         probe.destroy()
@@ -82,11 +83,14 @@ def test_main_window_builds_and_closes():
 
     from gui.main_window import MainWindow
 
-    window = MainWindow()
+    # Point at a throwaway database so this test never touches the real
+    # per-user application data directory (PROJECT_SPEC.md section 22).
+    window = MainWindow(db_path=tmp_path / "test.db")
     try:
         window.update_idletasks()
         assert window.title() == "SentinelLite - File Integrity Monitor"
         assert window.status_label.cget("text") == "Select a folder to begin."
-        assert str(window.change_folder_button.cget("state")) == "disabled"
+        assert str(window.change_folder_button.cget("state")) == "normal"
+        assert str(window.create_baseline_button.cget("state")) == "disabled"
     finally:
-        window.destroy()
+        window._on_close()
