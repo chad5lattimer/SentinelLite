@@ -7,7 +7,9 @@ Primary Language: Python 3.12+
 Target Output: Standalone Windows .exe
 Development Model: 7 scheduled Claude Code runs over 1 week
 
-Development Progress: Run 1 — Foundation complete (2026-09-02). See status/status_2026-09-02.md. Runs 2-7 not yet started.
+Development Progress: Run 1 — Foundation complete (2026-09-02). Run 2 — Hashing and Filesystem Engine complete (2026-09-06). Run 3 — Baseline System complete (2026-09-07). Run 4 — Comparison and Scan Engine complete (2026-09-08). See status/status_2026-09-02.md, status/status_2026-09-06.md, status/status_2026-09-07.md, and status/status_2026-09-08.md. Runs 5-7 not yet started.
+
+Note: PROJECT_SPEC.md is the canonical, actively-updated copy of this specification (this file is the original upload and may lag behind by formatting only -- progress is kept in sync).
 
 1. Project Overview
 1.1 Purpose
