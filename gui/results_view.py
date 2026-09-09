@@ -126,6 +126,16 @@ class ResultsView(ctk.CTkFrame):
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def results(self) -> list[ScanResult]:
+        """All currently loaded scan results, regardless of the active filter.
+
+        Exposed so callers (e.g. CSV/JSON export, PROJECT_SPEC.md
+        section 15) can export the complete scan, not just whatever subset
+        the results table happens to be filtered to.
+        """
+        return list(self._results)
+
     def set_results(self, results: Iterable[ScanResult], timestamp: str = "") -> None:
         """Replace the displayed results and refresh the summary and table."""
         self._results = list(results)

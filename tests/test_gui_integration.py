@@ -237,3 +237,89 @@ def test_results_view_filter_shows_only_matching_status():
         assert len(view.tree.get_children()) == 3
     finally:
         root.destroy()
+
+
+def test_export_buttons_disabled_until_a_scan_completes(tmp_path, gui_window):
+    """PROJECT_SPEC.md section 31 (Run 6): CSV/JSON export."""
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+    assert str(window.export_json_button.cget("state")) == "disabled"
+
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.export_csv_button.cget("state")) == "normal"
+    assert str(window.export_json_button.cget("state")) == "normal"
+
+    # Selecting a new folder resets export state until that folder is
+    # scanned too.
+    other = tmp_path / "Other"
+    other.mkdir()
+    window._set_directory(other)
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+
+
+def test_export_csv_and_json_write_files(tmp_path, gui_window, monkeypatch):
+    import csv
+    import json
+
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    (monitored / "b.txt").write_text("new")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    csv_path = tmp_path / "out.csv"
+    json_path = tmp_path / "out.json"
+
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: str(csv_path))
+    window._on_export_csv()
+    with csv_path.open(newline="", encoding="utf-8") as file:
+        rows = list(csv.reader(file))
+    assert rows[0] == ["status", "path", "baseline_hash", "current_hash", "size", "timestamp"]
+    assert len(rows) == 3  # header + a.txt (unchanged) + b.txt (new)
+
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: str(json_path))
+    window._on_export_json()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["scan_id"] == window._last_scan_id
+    assert payload["summary"]["new"] == 1
+    assert payload["summary"]["unchanged"] == 1
+    assert {entry["path"] for entry in payload["results"]} == {"a.txt", "b.txt"}
+
+
+def test_export_cancelled_dialog_does_not_write_file(tmp_path, gui_window, monkeypatch):
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: None)
+    window._on_export_csv()  # must not raise, must not prompt further
+
+    assert list(tmp_path.glob("*.csv")) == []

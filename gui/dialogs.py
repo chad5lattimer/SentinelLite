@@ -25,6 +25,28 @@ def choose_directory(parent, initial_dir: str | None = None) -> str | None:
     return chosen or None
 
 
+def choose_save_file(
+    parent,
+    *,
+    title: str,
+    initial_dir: str | None = None,
+    initial_file: str | None = None,
+    extension: str,
+    file_type_label: str,
+) -> str | None:
+    """Show a "save as" dialog for exporting a report (PROJECT_SPEC.md
+    section 15). Returns the chosen path, or ``None`` if cancelled."""
+    chosen = filedialog.asksaveasfilename(
+        parent=parent,
+        title=title,
+        initialdir=initial_dir or None,
+        initialfile=initial_file or None,
+        defaultextension=extension,
+        filetypes=[(file_type_label, f"*{extension}"), ("All Files", "*.*")],
+    )
+    return chosen or None
+
+
 def confirm_replace_baseline(parent) -> bool:
     """Warn that creating a new baseline replaces the monitoring reference.
 

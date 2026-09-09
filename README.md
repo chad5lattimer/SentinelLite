@@ -8,15 +8,17 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) through Run 5 (GUI Integration) complete.
+> **Status:** Run 1 (Foundation) through Run 6 (Reporting) complete.
 > The core engine can recursively enumerate a directory, compute SHA-256
 > hashes, create/save/load a baseline, run a scan that classifies every
 > file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and persist scan history
-> in a local SQLite database. The CustomTkinter GUI is now wired to all of
+> in a local SQLite database. The CustomTkinter GUI is wired to all of
 > this: pick a folder, create a baseline (with a confirmation before
 > replacing an existing one), run a scan on a background thread so the UI
-> never freezes, and view a filterable results table with summary counts.
-> CSV/JSON export and packaging land in Runs 6-7. See
+> never freezes, view a filterable results table with summary counts, and
+> export the current scan's results to CSV or JSON. Optional Windows
+> scheduled scanning (section 20) was deferred, as the spec allows, to
+> avoid risking MVP stability. Packaging lands in Run 7. See
 > [`status/`](status/) for per-run progress notes.
 
 ## Requirements

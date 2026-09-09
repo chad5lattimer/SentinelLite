@@ -39,6 +39,7 @@ from core.models import ScanStatus
 from core.scanner import ScanResult, run_scan, save_scan
 from gui import dialogs
 from gui.results_view import ResultsView
+from reports.exporter import export_csv, export_json
 from storage.database import connect as connect_db
 from storage.database import get_connection
 
@@ -88,6 +89,8 @@ class MainWindow(ctk.CTk):
         self._directory: Path | None = None
         self._baseline: Baseline | None = None
         self._scan_in_progress = False
+        self._last_scan_id: int | None = None
+        self._last_scan_completed_at: str | None = None
 
         PATHS.ensure_directories()
         self._db_path: Path = db_path or PATHS.database_path
@@ -110,6 +113,7 @@ class MainWindow(ctk.CTk):
         self._build_scan_section()
         self._build_progress_section()
         self._build_results_section()
+        self._build_export_section()
         self._build_status_section()
 
     def _build_header(self) -> None:
@@ -211,9 +215,23 @@ class MainWindow(ctk.CTk):
         self.results_view = ResultsView(self)
         self.results_view.grid(row=5, column=0, padx=20, pady=(0, 10), sticky="nsew")
 
+    def _build_export_section(self) -> None:
+        section = ctk.CTkFrame(self, fg_color="transparent")
+        section.grid(row=6, column=0, padx=20, pady=(0, 10), sticky="ew")
+
+        self.export_csv_button = ctk.CTkButton(
+            section, text="Export CSV", state="disabled", width=120, command=self._on_export_csv
+        )
+        self.export_csv_button.grid(row=0, column=0, padx=(0, 8))
+
+        self.export_json_button = ctk.CTkButton(
+            section, text="Export JSON", state="disabled", width=120, command=self._on_export_json
+        )
+        self.export_json_button.grid(row=0, column=1)
+
     def _build_status_section(self) -> None:
         section = ctk.CTkFrame(self)
-        section.grid(row=6, column=0, padx=20, pady=(0, 20), sticky="ew")
+        section.grid(row=7, column=0, padx=20, pady=(0, 20), sticky="ew")
         section.grid_columnconfigure(0, weight=1)
 
         self.status_label = ctk.CTkLabel(
@@ -251,6 +269,9 @@ class MainWindow(ctk.CTk):
         self._baseline = find_baseline_for_directory(self._connection, self._directory)
         self.results_view.clear()
         self.last_scan_label.configure(text="Last scan: never")
+        self._last_scan_id = None
+        self._last_scan_completed_at = None
+        self._update_export_buttons_state()
 
         if self._baseline is not None:
             self._show_baseline_ready(self._baseline)
@@ -306,6 +327,9 @@ class MainWindow(ctk.CTk):
         self.scan_now_button.configure(state="normal")
         self.results_view.clear()
         self.last_scan_label.configure(text="Last scan: never")
+        self._last_scan_id = None
+        self._last_scan_completed_at = None
+        self._update_export_buttons_state()
         self.status_label.configure(text="Baseline Ready")
         dialogs.show_info(
             self,
@@ -349,27 +373,30 @@ class MainWindow(ctk.CTk):
             on_error=self._on_scan_error,
         )
 
-    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str]:
+    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str, int]:
         started_at = datetime.now(timezone.utc).isoformat()
         results = run_scan(self._baseline, progress_callback=progress_callback)
         completed_at = datetime.now(timezone.utc).isoformat()
         # Runs on a background thread -- open a connection scoped to this
         # call rather than sharing self._connection (see class docstring).
         with connect_db(self._db_path) as worker_connection:
-            save_scan(
+            scan_id = save_scan(
                 worker_connection,
                 baseline_id=self._baseline.baseline_id,
                 started_at=started_at,
                 results=results,
                 completed_at=completed_at,
             )
-        return results, completed_at
+        return results, completed_at, scan_id
 
-    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str]) -> None:
-        results, completed_at = outcome
+    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str, int]) -> None:
+        results, completed_at, scan_id = outcome
         display_time = _format_display_time(completed_at)
         self.results_view.set_results(results, timestamp=display_time)
         self.last_scan_label.configure(text=f"Last scan: {display_time}")
+        self._last_scan_id = scan_id
+        self._last_scan_completed_at = completed_at
+        self._update_export_buttons_state()
 
         has_errors = any(result.status == ScanStatus.ERROR for result in results)
         has_changes = any(
@@ -468,6 +495,83 @@ class MainWindow(ctk.CTk):
             state=state if self._directory is not None else "disabled"
         )
         self.scan_now_button.configure(state=state if self._baseline is not None else "disabled")
+        if enabled:
+            self._update_export_buttons_state()
+        else:
+            self.export_csv_button.configure(state="disabled")
+            self.export_json_button.configure(state="disabled")
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _update_export_buttons_state(self) -> None:
+        state = "normal" if self._last_scan_id is not None else "disabled"
+        self.export_csv_button.configure(state=state)
+        self.export_json_button.configure(state=state)
+
+    def _on_export_csv(self) -> None:
+        self._export(
+            title="Export Scan Results as CSV",
+            extension=".csv",
+            file_type_label="CSV Files",
+            writer=lambda destination, results, completed_at: export_csv(
+                results, destination, timestamp=completed_at
+            ),
+        )
+
+    def _on_export_json(self) -> None:
+        self._export(
+            title="Export Scan Results as JSON",
+            extension=".json",
+            file_type_label="JSON Files",
+            writer=lambda destination, results, completed_at: export_json(
+                results,
+                destination,
+                scan_id=self._last_scan_id,
+                timestamp=completed_at,
+                root_directory=str(self._baseline.root_directory),
+            ),
+        )
+
+    def _export(
+        self,
+        *,
+        title: str,
+        extension: str,
+        file_type_label: str,
+        writer: Callable[[Path, list[ScanResult], str], Path],
+    ) -> None:
+        if self._last_scan_id is None or self._baseline is None:
+            return
+
+        results = self.results_view.results
+        default_name = f"sentinellite_scan_{self._last_scan_id}{extension}"
+        chosen = dialogs.choose_save_file(
+            self,
+            title=title,
+            initial_dir=str(PATHS.exports_dir),
+            initial_file=default_name,
+            extension=extension,
+            file_type_label=file_type_label,
+        )
+        if not chosen:
+            return
+
+        try:
+            destination = writer(Path(chosen), results, self._last_scan_completed_at)
+        except OSError as error:
+            logger.error("Failed to export scan #%d to %s.", self._last_scan_id, chosen, exc_info=error)
+            dialogs.show_error(
+                self,
+                "Export Failed",
+                f"The application could not write the export file:\n\n{chosen}\n\n"
+                "Check the application log for details.",
+            )
+            return
+
+        logger.info("Exported scan #%d to %s.", self._last_scan_id, destination)
+        dialogs.show_info(self, "Export Complete", f"Scan results were exported to:\n\n{destination}")
 
     # ------------------------------------------------------------------
     # Shutdown
