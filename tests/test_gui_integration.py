@@ -210,6 +210,74 @@ def test_switching_folders_finds_each_folders_own_baseline(tmp_path, gui_window)
     assert window._baseline.baseline_id == baseline_a_id
 
 
+def test_export_buttons_enable_after_scan_and_write_accurate_files(tmp_path, gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 30/31 acceptance: Scan -> Export CSV -> Export JSON."""
+    import json
+
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "unchanged.txt").write_text("same")
+    (monitored / "modified.txt").write_text("before")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    # No completed scan yet -- export is disabled.
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+    assert str(window.export_json_button.cget("state")) == "disabled"
+
+    (monitored / "modified.txt").write_text("after")
+    (monitored / "new.txt").write_text("new")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    assert str(window.export_csv_button.cget("state")) == "normal"
+    assert str(window.export_json_button.cget("state")) == "normal"
+
+    csv_path = tmp_path / "out.csv"
+    json_path = tmp_path / "out.json"
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: str(csv_path))
+    window._on_export_csv()
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: str(json_path))
+    window._on_export_json()
+
+    assert csv_path.exists()
+    csv_text = csv_path.read_text(encoding="utf-8")
+    assert "MODIFIED" in csv_text and "modified.txt" in csv_text
+    assert "NEW" in csv_text and "new.txt" in csv_text
+    assert "UNCHANGED" in csv_text and "unchanged.txt" in csv_text
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["root_directory"] == str(window._directory)
+    assert payload["summary"] == {"modified": 1, "new": 1, "deleted": 0, "unchanged": 1, "errors": 0}
+    paths = {entry["path"] for entry in payload["results"]}
+    assert paths == {"modified.txt", "new.txt", "unchanged.txt"}
+
+
+def test_selecting_a_new_folder_clears_previous_scans_export_state(tmp_path, gui_window):
+    folder_a = tmp_path / "A"
+    folder_a.mkdir()
+    (folder_a / "a.txt").write_text("one")
+    folder_b = tmp_path / "B"
+    folder_b.mkdir()
+
+    window = gui_window
+    window._set_directory(folder_a)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.export_csv_button.cget("state")) == "normal"
+
+    window._set_directory(folder_b)
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+    assert str(window.export_json_button.cget("state")) == "disabled"
+
+
 def test_results_view_filter_shows_only_matching_status():
     _require_display()
 

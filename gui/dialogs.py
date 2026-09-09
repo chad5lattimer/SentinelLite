@@ -9,6 +9,7 @@ Covers:
     - The folder picker (section 11.2, "Change Folder").
     - The accidental-replacement confirmation before overwriting an
       existing baseline (section 9).
+    - The save-file picker used by report export (section 15).
     - User-friendly error/info dialogs (section 18) -- callers are
       expected to supply plain-language text; raw tracebacks belong in the
       log, not here.
@@ -22,6 +23,30 @@ from tkinter import filedialog, messagebox
 def choose_directory(parent, initial_dir: str | None = None) -> str | None:
     """Show a folder picker. Returns the chosen path, or ``None`` if cancelled."""
     chosen = filedialog.askdirectory(parent=parent, mustexist=True, initialdir=initial_dir or None)
+    return chosen or None
+
+
+def choose_save_file(
+    parent,
+    *,
+    title: str,
+    default_name: str,
+    file_type_label: str,
+    extension: str,
+    initial_dir: str | None = None,
+) -> str | None:
+    """Show a "Save As" dialog for exporting a report (PROJECT_SPEC.md section 15).
+
+    Returns the chosen path, or ``None`` if cancelled.
+    """
+    chosen = filedialog.asksaveasfilename(
+        parent=parent,
+        title=title,
+        initialfile=default_name,
+        initialdir=initial_dir or None,
+        defaultextension=extension,
+        filetypes=[(file_type_label, f"*{extension}"), ("All Files", "*.*")],
+    )
     return chosen or None
 
 
