@@ -1,8 +1,10 @@
 """Main application window for SentinelLite.
 
-Run 5 scope: wires the CustomTkinter shell built in Run 1 to the core
-engine (``core.baseline`` / ``core.scanner``, Runs 2-4) through the
-storage layer (``storage.database`` / ``storage.repository``, Run 3).
+Run 5 wired the CustomTkinter shell built in Run 1 to the core engine
+(``core.baseline`` / ``core.scanner``, Runs 2-4) through the storage layer
+(``storage.database`` / ``storage.repository``, Run 3). Run 6 adds report
+export (``reports.exporter``) and a scan-history browser on top of that,
+per PROJECT_SPEC.md section 31.
 
 This module handles presentation and coordination only -- per
 PROJECT_SPEC.md section 5 ("The GUI must not contain hashing or
@@ -36,9 +38,10 @@ from core.baseline import (
     save_baseline,
 )
 from core.models import ScanStatus
-from core.scanner import ScanResult, run_scan, save_scan
+from core.scanner import ScanResult, get_scan_results, list_scans, run_scan, save_scan
 from gui import dialogs
 from gui.results_view import ResultsView
+from reports import exporter
 from storage.database import connect as connect_db
 from storage.database import get_connection
 
@@ -88,6 +91,7 @@ class MainWindow(ctk.CTk):
         self._directory: Path | None = None
         self._baseline: Baseline | None = None
         self._scan_in_progress = False
+        self._last_scan_id: int | None = None
 
         PATHS.ensure_directories()
         self._db_path: Path = db_path or PATHS.database_path
@@ -179,10 +183,18 @@ class MainWindow(ctk.CTk):
         self.last_scan_label = ctk.CTkLabel(section, text="Last scan: never", anchor="w")
         self.last_scan_label.grid(row=1, column=0, padx=16, pady=(0, 12), sticky="w")
 
-        self.scan_now_button = ctk.CTkButton(
-            section, text="Scan Now", state="disabled", command=self._on_scan_now
+        button_row = ctk.CTkFrame(section, fg_color="transparent")
+        button_row.grid(row=1, column=1, padx=16, pady=(0, 12), sticky="e")
+
+        self.history_button = ctk.CTkButton(
+            button_row, text="View History", state="disabled", command=self._on_view_history
         )
-        self.scan_now_button.grid(row=1, column=1, padx=16, pady=(0, 12), sticky="e")
+        self.history_button.grid(row=0, column=0, padx=(0, 8))
+
+        self.scan_now_button = ctk.CTkButton(
+            button_row, text="Scan Now", state="disabled", command=self._on_scan_now
+        )
+        self.scan_now_button.grid(row=0, column=1)
 
     def _build_progress_section(self) -> None:
         section = ctk.CTkFrame(self)
@@ -208,7 +220,9 @@ class MainWindow(ctk.CTk):
         section.grid_remove()  # hidden until a scan/baseline creation starts
 
     def _build_results_section(self) -> None:
-        self.results_view = ResultsView(self)
+        self.results_view = ResultsView(
+            self, on_export_csv=self._on_export_csv, on_export_json=self._on_export_json
+        )
         self.results_view.grid(row=5, column=0, padx=20, pady=(0, 10), sticky="nsew")
 
     def _build_status_section(self) -> None:
@@ -249,18 +263,21 @@ class MainWindow(ctk.CTk):
         self.create_baseline_button.configure(state="normal")
 
         self._baseline = find_baseline_for_directory(self._connection, self._directory)
+        self._last_scan_id = None
         self.results_view.clear()
         self.last_scan_label.configure(text="Last scan: never")
 
         if self._baseline is not None:
             self._show_baseline_ready(self._baseline)
             self.scan_now_button.configure(state="normal")
+            self.history_button.configure(state="normal")
             self.status_label.configure(text="Baseline Ready")
         else:
             self.baseline_status_label.configure(
                 text="No baseline exists. Create a baseline before scanning."
             )
             self.scan_now_button.configure(state="disabled")
+            self.history_button.configure(state="disabled")
             self.status_label.configure(text="No baseline exists. Create a baseline before scanning.")
 
     def _show_baseline_ready(self, baseline: Baseline) -> None:
@@ -302,8 +319,10 @@ class MainWindow(ctk.CTk):
 
     def _on_baseline_created(self, baseline: Baseline) -> None:
         self._baseline = baseline
+        self._last_scan_id = None
         self._show_baseline_ready(baseline)
         self.scan_now_button.configure(state="normal")
+        self.history_button.configure(state="normal")
         self.results_view.clear()
         self.last_scan_label.configure(text="Last scan: never")
         self.status_label.configure(text="Baseline Ready")
@@ -349,24 +368,25 @@ class MainWindow(ctk.CTk):
             on_error=self._on_scan_error,
         )
 
-    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str]:
+    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str, int]:
         started_at = datetime.now(timezone.utc).isoformat()
         results = run_scan(self._baseline, progress_callback=progress_callback)
         completed_at = datetime.now(timezone.utc).isoformat()
         # Runs on a background thread -- open a connection scoped to this
         # call rather than sharing self._connection (see class docstring).
         with connect_db(self._db_path) as worker_connection:
-            save_scan(
+            scan_id = save_scan(
                 worker_connection,
                 baseline_id=self._baseline.baseline_id,
                 started_at=started_at,
                 results=results,
                 completed_at=completed_at,
             )
-        return results, completed_at
+        return results, completed_at, scan_id
 
-    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str]) -> None:
-        results, completed_at = outcome
+    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str, int]) -> None:
+        results, completed_at, scan_id = outcome
+        self._last_scan_id = scan_id
         display_time = _format_display_time(completed_at)
         self.results_view.set_results(results, timestamp=display_time)
         self.last_scan_label.configure(text=f"Last scan: {display_time}")
@@ -397,6 +417,80 @@ class MainWindow(ctk.CTk):
                 "Check the application log for details."
             ),
         )
+
+    # ------------------------------------------------------------------
+    # Scan history
+    # ------------------------------------------------------------------
+
+    def _on_view_history(self) -> None:
+        if self._baseline is None or self._scan_in_progress:
+            return
+
+        scans = list_scans(self._connection, baseline_id=self._baseline.baseline_id)
+        if not scans:
+            dialogs.show_info(
+                self, "Scan History", "No scans have been recorded yet for this baseline."
+            )
+            return
+
+        selected = dialogs.show_scan_history(self, scans)
+        if selected is None:
+            return
+
+        results = get_scan_results(self._connection, selected.scan_id)
+        display_time = _format_display_time(selected.completed_at or selected.started_at)
+        self._last_scan_id = selected.scan_id
+        self.results_view.set_results(results, timestamp=display_time)
+        self.status_label.configure(text=f"Viewing scan history: {display_time}")
+
+    # ------------------------------------------------------------------
+    # Report export
+    # ------------------------------------------------------------------
+
+    def _on_export_csv(self) -> None:
+        self._export_results("csv")
+
+    def _on_export_json(self) -> None:
+        self._export_results("json")
+
+    def _export_results(self, file_type: str) -> None:
+        results = self.results_view.results
+        if not results:
+            dialogs.show_info(
+                self, "Nothing to Export", "Run a scan first to produce results to export."
+            )
+            return
+
+        default_name = f"sentinellite_scan_{self._last_scan_id or 'results'}.{file_type}"
+        chosen = dialogs.choose_export_destination(self, file_type, PATHS.exports_dir, default_name)
+        if chosen is None:
+            return
+
+        destination = Path(chosen)
+        try:
+            if file_type == "csv":
+                exporter.export_csv(results, destination, timestamp=self.results_view.timestamp)
+            else:
+                exporter.export_json(
+                    results,
+                    destination,
+                    scan_id=self._last_scan_id,
+                    timestamp=self.results_view.timestamp,
+                    root_directory=str(self._baseline.root_directory) if self._baseline else "",
+                )
+        except OSError as error:
+            logger.error("Export to %s failed.", destination, exc_info=error)
+            dialogs.show_error(
+                self,
+                "Export Failed",
+                (
+                    f"The application could not write to:\n\n{destination}\n\n"
+                    "Check the application log for details."
+                ),
+            )
+            return
+
+        dialogs.show_info(self, "Export Complete", f"Results exported to:\n\n{destination}")
 
     # ------------------------------------------------------------------
     # Background task plumbing
@@ -468,6 +562,7 @@ class MainWindow(ctk.CTk):
             state=state if self._directory is not None else "disabled"
         )
         self.scan_now_button.configure(state=state if self._baseline is not None else "disabled")
+        self.history_button.configure(state=state if self._baseline is not None else "disabled")
 
     # ------------------------------------------------------------------
     # Shutdown

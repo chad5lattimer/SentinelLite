@@ -210,6 +210,109 @@ def test_switching_folders_finds_each_folders_own_baseline(tmp_path, gui_window)
     assert window._baseline.baseline_id == baseline_a_id
 
 
+def test_export_csv_and_json_write_current_results(tmp_path, gui_window, monkeypatch):
+    """Run 6 acceptance criteria (section 31): scan -> export CSV -> export JSON."""
+    import json
+
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    csv_path = tmp_path / "out.csv"
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: str(csv_path))
+    window._on_export_csv()
+    assert csv_path.exists()
+    assert csv_path.read_text().splitlines()[0] == (
+        "status,path,baseline_hash,current_hash,size,timestamp"
+    )
+
+    json_path = tmp_path / "out.json"
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: str(json_path))
+    window._on_export_json()
+    assert json_path.exists()
+    payload = json.loads(json_path.read_text())
+    assert payload["scan_id"] == window._last_scan_id
+    assert payload["root_directory"] == str(monitored.resolve())
+    assert len(payload["results"]) == 1
+
+
+def test_export_with_no_results_shows_info_not_dialog(tmp_path, gui_window, monkeypatch):
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+
+    window = gui_window
+    window._set_directory(monitored)
+
+    called = []
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: called.append(1))
+    window._on_export_csv()
+    assert called == []  # never prompted for a destination -- nothing to export yet
+
+
+def test_view_history_loads_a_past_scan_into_the_results_view(tmp_path, gui_window, monkeypatch):
+    """Run 6 acceptance criteria (section 31): a scan-history UI exists."""
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    first_scan_id = window._last_scan_id
+
+    # A second scan with no changes -- history should offer both.
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    from storage.repository import list_scans as list_scans_direct
+
+    scans = list_scans_direct(window._connection, baseline_id=window._baseline.baseline_id)
+    assert len(scans) == 2
+
+    monkeypatch.setattr(dialogs, "show_scan_history", lambda parent, scans: scans[-1])
+    window._on_view_history()
+
+    assert window._last_scan_id == first_scan_id
+    assert len(window.results_view.results) == 1
+    assert "Viewing scan history" in window.status_label.cget("text")
+
+
+def test_view_history_with_no_scans_shows_info(tmp_path, gui_window, monkeypatch):
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    called = []
+    monkeypatch.setattr(dialogs, "show_scan_history", lambda *a, **k: called.append(1))
+    window._on_view_history()
+    assert called == []  # never opened the history browser -- there is no history yet
+
+
 def test_results_view_filter_shows_only_matching_status():
     _require_display()
 

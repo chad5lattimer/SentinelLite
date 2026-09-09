@@ -7,7 +7,7 @@ Primary Language: Python 3.12+
 Target Output: Standalone Windows .exe
 Development Model: 7 scheduled Claude Code runs over 1 week
 
-Development Progress: Run 1 — Foundation complete (2026-09-02). Run 2 — Hashing and Filesystem Engine complete (2026-09-06). Run 3 — Baseline System complete (2026-09-07). Run 4 — Comparison and Scan Engine complete (2026-09-08). Run 5 — GUI Integration complete (2026-09-08). See status/status_2026-09-02.md, status/status_2026-09-06.md, status/status_2026-09-07.md, status/status_2026-09-08.md, and status/status_2026-09-08-run5.md. Runs 6-7 not yet started.
+Development Progress: Run 1 — Foundation complete (2026-09-02). Run 2 — Hashing and Filesystem Engine complete (2026-09-06). Run 3 — Baseline System complete (2026-09-07). Run 4 — Comparison and Scan Engine complete (2026-09-08). Run 5 — GUI Integration complete (2026-09-08). Run 6 — Reporting and Optional Scheduling complete (2026-09-09): CSV/JSON export and a scan-history browser; scheduled scanning deferred (see Run 6 notes below). See status/status_2026-09-02.md, status/status_2026-09-06.md, status/status_2026-09-07.md, status/status_2026-09-08.md, status/status_2026-09-08-run5.md, and status/status_2026-09-09.md. Run 7 not yet started.
 
 1. Project Overview
 1.1 Purpose
@@ -1022,6 +1022,14 @@ Export CSV
  ↓
 Export JSON
 and exported files contain accurate results.
+
+Run 6 status (2026-09-09): Reporting and the scan-history UI are
+implemented (`reports/exporter.py`, `gui/dialogs.py`'s scan-history
+browser). Per this section's stated priority order, Windows scheduled
+scanning is deferred to keep this automated run's scope small and the
+core application stable — it remains available as a Future Enhancement
+(section 39) and does not block the Definition of Done (section 40),
+which does not require it. See status/status_2026-09-09.md for detail.
 
 32. Run 7 — QA and Packaging
 Objectives

@@ -13,7 +13,7 @@ inside a CTk layout.
 from __future__ import annotations
 
 from tkinter import ttk
-from typing import Iterable
+from typing import Callable, Iterable
 
 import customtkinter as ctk
 
@@ -53,13 +53,20 @@ _HEADINGS: dict[str, str] = {
 class ResultsView(ctk.CTkFrame):
     """Summary statistics plus a filterable, sortable results table."""
 
-    def __init__(self, master) -> None:
+    def __init__(
+        self,
+        master,
+        on_export_csv: Callable[[], None] | None = None,
+        on_export_json: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(master, fg_color="transparent")
 
         self._results: list[ScanResult] = []
         self._timestamp = ""
         self._active_filter = "All"
         self._sort_reverse: dict[str, bool] = {}
+        self._export_csv_callback = on_export_csv
+        self._export_json_callback = on_export_json
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -83,11 +90,36 @@ class ResultsView(ctk.CTkFrame):
             self._summary_labels[name] = label
 
     def _build_filter(self) -> None:
+        control_row = ctk.CTkFrame(self, fg_color="transparent")
+        control_row.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 8))
+        control_row.grid_columnconfigure(0, weight=1)
+
         self.filter_control = ctk.CTkSegmentedButton(
-            self, values=list(FILTER_OPTIONS), command=self._on_filter_changed
+            control_row, values=list(FILTER_OPTIONS), command=self._on_filter_changed
         )
         self.filter_control.set("All")
-        self.filter_control.grid(row=1, column=0, sticky="w", padx=4, pady=(0, 8))
+        self.filter_control.grid(row=0, column=0, sticky="w")
+
+        export_row = ctk.CTkFrame(control_row, fg_color="transparent")
+        export_row.grid(row=0, column=1, sticky="e")
+
+        self.export_csv_button = ctk.CTkButton(
+            export_row,
+            text="Export CSV",
+            width=100,
+            state="disabled",
+            command=self._handle_export_csv,
+        )
+        self.export_csv_button.grid(row=0, column=0, padx=(0, 8))
+
+        self.export_json_button = ctk.CTkButton(
+            export_row,
+            text="Export JSON",
+            width=100,
+            state="disabled",
+            command=self._handle_export_json,
+        )
+        self.export_json_button.grid(row=0, column=1)
 
     def _build_table(self) -> None:
         table_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -126,6 +158,16 @@ class ResultsView(ctk.CTkFrame):
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def results(self) -> list[ScanResult]:
+        """The currently displayed results, unfiltered (a copy)."""
+        return list(self._results)
+
+    @property
+    def timestamp(self) -> str:
+        """The display timestamp passed to the most recent ``set_results`` call."""
+        return self._timestamp
+
     def set_results(self, results: Iterable[ScanResult], timestamp: str = "") -> None:
         """Replace the displayed results and refresh the summary and table."""
         self._results = list(results)
@@ -139,11 +181,27 @@ class ResultsView(ctk.CTkFrame):
         self._summary_labels["Unchanged"].configure(text=f"Unchanged: {summary.unchanged}")
         self._summary_labels["Errors"].configure(text=f"Errors: {summary.errors}")
 
+        export_state = "normal" if self._results else "disabled"
+        self.export_csv_button.configure(state=export_state)
+        self.export_json_button.configure(state=export_state)
+
         self._render_rows()
 
     def clear(self) -> None:
         """Reset to the empty, no-scan-yet state."""
         self.set_results([])
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _handle_export_csv(self) -> None:
+        if self._export_csv_callback is not None:
+            self._export_csv_callback()
+
+    def _handle_export_json(self) -> None:
+        if self._export_json_callback is not None:
+            self._export_json_callback()
 
     # ------------------------------------------------------------------
     # Filtering / sorting / rendering
