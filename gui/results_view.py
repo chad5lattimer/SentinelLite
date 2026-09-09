@@ -13,7 +13,7 @@ inside a CTk layout.
 from __future__ import annotations
 
 from tkinter import ttk
-from typing import Iterable
+from typing import Callable, Iterable
 
 import customtkinter as ctk
 
@@ -53,13 +53,21 @@ _HEADINGS: dict[str, str] = {
 class ResultsView(ctk.CTkFrame):
     """Summary statistics plus a filterable, sortable results table."""
 
-    def __init__(self, master) -> None:
+    def __init__(
+        self,
+        master,
+        *,
+        on_export_csv: Callable[[], None] | None = None,
+        on_export_json: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(master, fg_color="transparent")
 
         self._results: list[ScanResult] = []
         self._timestamp = ""
         self._active_filter = "All"
         self._sort_reverse: dict[str, bool] = {}
+        self._on_export_csv = on_export_csv
+        self._on_export_json = on_export_json
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -83,11 +91,49 @@ class ResultsView(ctk.CTkFrame):
             self._summary_labels[name] = label
 
     def _build_filter(self) -> None:
+        filter_row = ctk.CTkFrame(self, fg_color="transparent")
+        filter_row.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 8))
+        filter_row.grid_columnconfigure(0, weight=1)
+
         self.filter_control = ctk.CTkSegmentedButton(
-            self, values=list(FILTER_OPTIONS), command=self._on_filter_changed
+            filter_row, values=list(FILTER_OPTIONS), command=self._on_filter_changed
         )
         self.filter_control.set("All")
-        self.filter_control.grid(row=1, column=0, sticky="w", padx=4, pady=(0, 8))
+        self.filter_control.grid(row=0, column=0, sticky="w")
+
+        # Export buttons (PROJECT_SPEC.md section 15) -- disabled until a
+        # scan has produced results (see `set_results`/`clear`). The actual
+        # export logic lives outside this view (main_window.py owns the
+        # last scan's results/metadata and the save-file dialog); this view
+        # only renders the buttons and forwards clicks.
+        export_row = ctk.CTkFrame(filter_row, fg_color="transparent")
+        export_row.grid(row=0, column=1, sticky="e")
+
+        self.export_csv_button = ctk.CTkButton(
+            export_row,
+            text="Export CSV",
+            width=110,
+            state="disabled",
+            command=self._handle_export_csv,
+        )
+        self.export_csv_button.grid(row=0, column=0, padx=(0, 8))
+
+        self.export_json_button = ctk.CTkButton(
+            export_row,
+            text="Export JSON",
+            width=110,
+            state="disabled",
+            command=self._handle_export_json,
+        )
+        self.export_json_button.grid(row=0, column=1)
+
+    def _handle_export_csv(self) -> None:
+        if self._on_export_csv is not None:
+            self._on_export_csv()
+
+    def _handle_export_json(self) -> None:
+        if self._on_export_json is not None:
+            self._on_export_json()
 
     def _build_table(self) -> None:
         table_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -138,6 +184,10 @@ class ResultsView(ctk.CTkFrame):
         self._summary_labels["Deleted"].configure(text=f"Deleted: {summary.deleted}")
         self._summary_labels["Unchanged"].configure(text=f"Unchanged: {summary.unchanged}")
         self._summary_labels["Errors"].configure(text=f"Errors: {summary.errors}")
+
+        export_state = "normal" if self._results else "disabled"
+        self.export_csv_button.configure(state=export_state)
+        self.export_json_button.configure(state=export_state)
 
         self._render_rows()
 

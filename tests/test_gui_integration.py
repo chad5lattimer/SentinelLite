@@ -210,6 +210,122 @@ def test_switching_folders_finds_each_folders_own_baseline(tmp_path, gui_window)
     assert window._baseline.baseline_id == baseline_a_id
 
 
+def test_export_buttons_disabled_until_scan_has_results(tmp_path, gui_window):
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    assert str(window.results_view.export_csv_button.cget("state")) == "disabled"
+    assert str(window.results_view.export_json_button.cget("state")) == "disabled"
+
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    # A baseline alone (no scan yet) still has no exportable results.
+    assert str(window.results_view.export_csv_button.cget("state")) == "disabled"
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.results_view.export_csv_button.cget("state")) == "normal"
+    assert str(window.results_view.export_json_button.cget("state")) == "normal"
+
+
+def test_export_csv_and_json_write_accurate_files(tmp_path, gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 15 / Run 6 acceptance: scan -> view results ->
+    export CSV -> export JSON, and the exported files contain accurate
+    results."""
+    import csv
+    import json
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "unchanged.txt").write_text("same")
+    (monitored / "modified.txt").write_text("before")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    (monitored / "modified.txt").write_text("after")
+    (monitored / "new.txt").write_text("new")
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    assert window._last_scan_id is not None
+    scan_id = window._last_scan_id
+
+    csv_destination = tmp_path / "export.csv"
+    json_destination = tmp_path / "export.json"
+    destinations = iter([str(csv_destination), str(json_destination)])
+    from gui import dialogs
+
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: next(destinations))
+
+    window._on_export_csv()
+    window._on_export_json()
+
+    assert csv_destination.exists()
+    assert json_destination.exists()
+
+    with csv_destination.open(newline="", encoding="utf-8") as handle:
+        rows = {row["path"]: row["status"] for row in csv.DictReader(handle)}
+    assert rows["unchanged.txt"] == "UNCHANGED"
+    assert rows["modified.txt"] == "MODIFIED"
+    assert rows["new.txt"] == "NEW"
+
+    with json_destination.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    assert payload["scan_id"] == scan_id
+    assert payload["summary"]["modified"] == 1
+    assert payload["summary"]["new"] == 1
+    assert payload["summary"]["unchanged"] == 1
+    results_by_path = {entry["path"]: entry["status"] for entry in payload["results"]}
+    assert results_by_path["modified.txt"] == "MODIFIED"
+
+
+def test_export_cancelled_dialog_writes_nothing(tmp_path, gui_window, monkeypatch):
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    from gui import dialogs
+
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: None)
+    # Must not raise even though no destination was chosen.
+    window._on_export_csv()
+    window._on_export_json()
+
+
+def test_switching_folders_clears_previous_scans_exportable_results(tmp_path, gui_window):
+    folder_a = tmp_path / "A"
+    folder_a.mkdir()
+    (folder_a / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(folder_a)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert window._last_scan_id is not None
+
+    folder_b = tmp_path / "B"
+    folder_b.mkdir()
+    window._set_directory(folder_b)
+    assert window._last_scan_id is None
+    assert str(window.results_view.export_csv_button.cget("state")) == "disabled"
+
+
 def test_results_view_filter_shows_only_matching_status():
     _require_display()
 
