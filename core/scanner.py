@@ -206,6 +206,7 @@ def run_scan(
             exists (propagated from ``core.filesystem.scan_directory``).
     """
     root = Path(baseline.root_directory)
+    logger.info("Scan of %s started (baseline #%s).", root, baseline.baseline_id)
     current_records, current_errors = scan_directory(
         root, progress_callback=progress_callback, chunk_size=chunk_size
     )

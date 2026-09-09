@@ -210,6 +210,105 @@ def test_switching_folders_finds_each_folders_own_baseline(tmp_path, gui_window)
     assert window._baseline.baseline_id == baseline_a_id
 
 
+def test_export_buttons_disabled_until_a_scan_completes(tmp_path, gui_window):
+    """PROJECT_SPEC.md section 30 (Run 6): exports need a scan to export."""
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+    assert str(window.export_json_button.cget("state")) == "disabled"
+    assert str(window.scan_history_button.cget("state")) == "disabled"
+
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.scan_history_button.cget("state")) == "normal"
+    assert str(window.export_csv_button.cget("state")) == "disabled"
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.export_csv_button.cget("state")) == "normal"
+    assert str(window.export_json_button.cget("state")) == "normal"
+
+
+def test_export_csv_and_json_write_the_last_scan(tmp_path, gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 15: exported files contain accurate results."""
+    import json
+
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    (monitored / "b.txt").write_text("new")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    csv_path = tmp_path / "out.csv"
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: str(csv_path))
+    window._on_export_csv()
+    assert csv_path.exists()
+    assert "b.txt" in csv_path.read_text(encoding="utf-8")
+
+    json_path = tmp_path / "out.json"
+    monkeypatch.setattr(dialogs, "choose_save_file", lambda *a, **k: str(json_path))
+    window._on_export_json()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["scan_id"] == window._last_scan_id
+    assert payload["summary"]["new"] == 1
+
+
+def test_scan_history_lists_scans_and_can_reload_results(tmp_path, gui_window):
+    """PROJECT_SPEC.md section 30 (Run 6): scan history UI."""
+    from gui.history_view import ScanHistoryDialog
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    (monitored / "a.txt").write_text("changed")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    dialog = ScanHistoryDialog(
+        window,
+        window._connection,
+        window._baseline.baseline_id,
+        on_view_results=lambda results, ts: None,
+        on_export=lambda *a: None,
+    )
+    try:
+        assert len(dialog._scans) == 2
+        # Most recent scan (the MODIFIED one) listed first.
+        assert dialog._scans[0].modified_count == 1
+        assert dialog._scans[1].modified_count == 0
+    finally:
+        dialog.destroy()
+
+    # Reloading an older scan's results into the main window works too.
+    older_scan_id = dialog._scans[1].scan_id
+    from core.scanner import get_scan_results
+
+    older_results = get_scan_results(window._connection, older_scan_id)
+    window._on_history_results_selected(older_results, "some time")
+    statuses = {result.status for result in window.results_view._results}
+    assert statuses == {ScanStatus.UNCHANGED}
+
+
 def test_results_view_filter_shows_only_matching_status():
     _require_display()
 
