@@ -237,3 +237,187 @@ def test_results_view_filter_shows_only_matching_status():
         assert len(view.tree.get_children()) == 3
     finally:
         root.destroy()
+
+
+# ---------------------------------------------------------------------------
+# Run 6 - Reporting and scan history (PROJECT_SPEC.md sections 15, 31)
+# ---------------------------------------------------------------------------
+
+
+def test_export_buttons_disabled_until_results_exist(tmp_path, gui_window):
+    window = gui_window
+    assert str(window.results_view.export_csv_button.cget("state")) == "disabled"
+    assert str(window.results_view.export_json_button.cget("state")) == "disabled"
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    assert str(window.results_view.export_csv_button.cget("state")) == "normal"
+    assert str(window.results_view.export_json_button.cget("state")) == "normal"
+
+
+def test_export_csv_and_json_write_expected_files(tmp_path, gui_window, monkeypatch):
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    (monitored / "b.txt").write_text("new")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    csv_path = tmp_path / "exports" / "out.csv"
+    json_path = tmp_path / "exports" / "out.json"
+    destinations = iter([str(csv_path), str(json_path)])
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: next(destinations))
+
+    window.results_view._on_export_csv()
+    window.results_view._on_export_json()
+
+    assert csv_path.exists()
+    assert json_path.exists()
+
+    import csv as csv_module
+
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv_module.reader(handle))
+    assert rows[0] == ["status", "path", "baseline_hash", "current_hash", "size", "timestamp"]
+    assert len(rows) == 1 + len(window.results_view._results)
+
+    import json as json_module
+
+    payload = json_module.loads(json_path.read_text())
+    assert payload["root_directory"] == window._baseline.root_directory
+    assert payload["scan_id"] == window.results_view._scan_id
+    assert len(payload["results"]) == len(window.results_view._results)
+
+
+def test_export_failure_shows_friendly_error_not_crash(tmp_path, gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 18: export failures must not crash the app."""
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    # A destination inside a file (not a directory) cannot be written to.
+    blocked_parent = tmp_path / "not_a_directory"
+    blocked_parent.write_text("occupied")
+    bad_destination = str(blocked_parent / "out.csv")
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: bad_destination)
+
+    errors = []
+    monkeypatch.setattr(dialogs, "show_error", lambda *a, **k: errors.append(a))
+
+    window.results_view._on_export_csv()  # must not raise
+
+    assert len(errors) == 1
+
+
+def test_scan_history_lists_scans_and_reloads_selected(tmp_path, gui_window):
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert str(window.scan_history_button.cget("state")) == "normal"
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    first_scan_id = window.results_view._scan_id
+
+    (monitored / "b.txt").write_text("two")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    second_scan_id = window.results_view._scan_id
+    assert second_scan_id != first_scan_id
+
+    from core.scanner import list_scans
+
+    scans = list_scans(window._connection, baseline_id=window._baseline.baseline_id)
+    assert len(scans) == 2
+    assert {scan.scan_id for scan in scans} == {first_scan_id, second_scan_id}
+
+    # Reload the first scan, as the history dialog's "View Selected" would.
+    first_metadata = next(scan for scan in scans if scan.scan_id == first_scan_id)
+    window._on_history_scan_selected(first_metadata)
+
+    assert window.results_view._scan_id == first_scan_id
+    assert "(from history)" in window.last_scan_label.cget("text")
+    assert window.status_label.cget("text") == "Viewing scan history"
+
+
+def test_scan_history_with_no_scans_shows_info_not_empty_dialog(tmp_path, gui_window, monkeypatch):
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    infos = []
+    monkeypatch.setattr(dialogs, "show_info", lambda *a, **k: infos.append(a))
+
+    window._on_view_scan_history()
+
+    assert len(infos) == 1
+
+
+def test_scan_history_dialog_selects_and_invokes_callback():
+    _require_display()
+
+    from core.scanner import ScanMetadata
+    from gui.history_dialog import ScanHistoryDialog
+
+    import tkinter as tk
+
+    root = tk.Tk()
+    try:
+        scans = [
+            ScanMetadata(
+                scan_id=1,
+                baseline_id=1,
+                started_at="2026-09-08T00:00:00+00:00",
+                completed_at="2026-09-08T00:05:00+00:00",
+                modified_count=1,
+                new_count=0,
+                deleted_count=0,
+                unchanged_count=2,
+                error_count=0,
+            ),
+        ]
+        selected: list = []
+        dialog = ScanHistoryDialog(root, scans, on_select=selected.append)
+        dialog.update()
+        dialog._select_current()
+
+        assert selected == scans
+    finally:
+        root.destroy()

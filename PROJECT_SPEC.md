@@ -7,7 +7,7 @@ Primary Language: Python 3.12+
 Target Output: Standalone Windows .exe
 Development Model: 7 scheduled Claude Code runs over 1 week
 
-Development Progress: Run 1 — Foundation complete (2026-09-02). Run 2 — Hashing and Filesystem Engine complete (2026-09-06). Run 3 — Baseline System complete (2026-09-07). Run 4 — Comparison and Scan Engine complete (2026-09-08). Run 5 — GUI Integration complete (2026-09-08). See status/status_2026-09-02.md, status/status_2026-09-06.md, status/status_2026-09-07.md, status/status_2026-09-08.md, and status/status_2026-09-08-run5.md. Runs 6-7 not yet started.
+Development Progress: Run 1 — Foundation complete (2026-09-02). Run 2 — Hashing and Filesystem Engine complete (2026-09-06). Run 3 — Baseline System complete (2026-09-07). Run 4 — Comparison and Scan Engine complete (2026-09-08). Run 5 — GUI Integration complete (2026-09-08). Run 6 — Reporting and Scan History complete (2026-09-10); Windows Task Scheduler integration deferred, see section 31 notes below. See status/status_2026-09-02.md, status/status_2026-09-06.md, status/status_2026-09-07.md, status/status_2026-09-08.md, status/status_2026-09-08-run5.md, and status/status_2026-09-10-run6.md. Run 7 not yet started.
 
 1. Project Overview
 1.1 Purpose
@@ -1022,6 +1022,21 @@ Export CSV
  ↓
 Export JSON
 and exported files contain accurate results.
+
+Run 6 status (complete, 2026-09-10): Implemented `reports/exporter.py`
+(`export_to_csv` / `export_to_json`, section 15), "Export CSV" / "Export
+JSON" buttons on the results view (enabled once a scan has results,
+disabled otherwise), a "Scan History" dialog (`gui/history_dialog.py`)
+listing prior scans for the active baseline with the ability to reload one
+into the results table, and user-friendly error dialogs plus logging
+(section 16) for export failures. Windows Task Scheduler integration
+(scheduled scanning) was evaluated and explicitly deferred per this
+section's own allowance ("If Run 6 cannot implement it reliably, defer
+it."): this development container is Linux-only, so `schtasks`
+integration cannot be exercised or verified here, and scheduling is
+explicitly the lowest-priority Run 6 item behind reporting, error
+handling, and logging, all of which are now complete and tested. See
+`status/status_2026-09-10-run6.md` for full details.
 
 32. Run 7 — QA and Packaging
 Objectives

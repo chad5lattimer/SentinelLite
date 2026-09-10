@@ -36,8 +36,10 @@ from core.baseline import (
     save_baseline,
 )
 from core.models import ScanStatus
-from core.scanner import ScanResult, run_scan, save_scan
+from core.scanner import ScanResult, list_scans, run_scan, save_scan
 from gui import dialogs
+from gui.formatting import format_display_time
+from gui.history_dialog import ScanHistoryDialog
 from gui.results_view import ResultsView
 from storage.database import connect as connect_db
 from storage.database import get_connection
@@ -51,13 +53,7 @@ logger = logging.getLogger(__name__)
 _PROGRESS_UPDATE_INTERVAL_SECONDS = 0.1
 
 
-def _format_display_time(iso_timestamp: str) -> str:
-    """Render an ISO-8601 timestamp as a friendly string, e.g. "Aug 26, 2026 12:31 AM"."""
-    try:
-        parsed = datetime.fromisoformat(iso_timestamp)
-    except ValueError:
-        return iso_timestamp
-    return parsed.strftime("%b %d, %Y %I:%M %p")
+_format_display_time = format_display_time
 
 
 class MainWindow(ctk.CTk):
@@ -179,10 +175,23 @@ class MainWindow(ctk.CTk):
         self.last_scan_label = ctk.CTkLabel(section, text="Last scan: never", anchor="w")
         self.last_scan_label.grid(row=1, column=0, padx=16, pady=(0, 12), sticky="w")
 
-        self.scan_now_button = ctk.CTkButton(
-            section, text="Scan Now", state="disabled", command=self._on_scan_now
+        button_row = ctk.CTkFrame(section, fg_color="transparent")
+        button_row.grid(row=1, column=1, padx=16, pady=(0, 12), sticky="e")
+
+        self.scan_history_button = ctk.CTkButton(
+            button_row,
+            text="Scan History",
+            state="disabled",
+            fg_color="transparent",
+            border_width=1,
+            command=self._on_view_scan_history,
         )
-        self.scan_now_button.grid(row=1, column=1, padx=16, pady=(0, 12), sticky="e")
+        self.scan_history_button.grid(row=0, column=0, padx=(0, 8))
+
+        self.scan_now_button = ctk.CTkButton(
+            button_row, text="Scan Now", state="disabled", command=self._on_scan_now
+        )
+        self.scan_now_button.grid(row=0, column=1)
 
     def _build_progress_section(self) -> None:
         section = ctk.CTkFrame(self)
@@ -255,12 +264,14 @@ class MainWindow(ctk.CTk):
         if self._baseline is not None:
             self._show_baseline_ready(self._baseline)
             self.scan_now_button.configure(state="normal")
+            self.scan_history_button.configure(state="normal")
             self.status_label.configure(text="Baseline Ready")
         else:
             self.baseline_status_label.configure(
                 text="No baseline exists. Create a baseline before scanning."
             )
             self.scan_now_button.configure(state="disabled")
+            self.scan_history_button.configure(state="disabled")
             self.status_label.configure(text="No baseline exists. Create a baseline before scanning.")
 
     def _show_baseline_ready(self, baseline: Baseline) -> None:
@@ -304,6 +315,7 @@ class MainWindow(ctk.CTk):
         self._baseline = baseline
         self._show_baseline_ready(baseline)
         self.scan_now_button.configure(state="normal")
+        self.scan_history_button.configure(state="normal")
         self.results_view.clear()
         self.last_scan_label.configure(text="Last scan: never")
         self.status_label.configure(text="Baseline Ready")
@@ -349,26 +361,31 @@ class MainWindow(ctk.CTk):
             on_error=self._on_scan_error,
         )
 
-    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str]:
+    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str, int]:
         started_at = datetime.now(timezone.utc).isoformat()
         results = run_scan(self._baseline, progress_callback=progress_callback)
         completed_at = datetime.now(timezone.utc).isoformat()
         # Runs on a background thread -- open a connection scoped to this
         # call rather than sharing self._connection (see class docstring).
         with connect_db(self._db_path) as worker_connection:
-            save_scan(
+            scan_id = save_scan(
                 worker_connection,
                 baseline_id=self._baseline.baseline_id,
                 started_at=started_at,
                 results=results,
                 completed_at=completed_at,
             )
-        return results, completed_at
+        return results, completed_at, scan_id
 
-    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str]) -> None:
-        results, completed_at = outcome
+    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str, int]) -> None:
+        results, completed_at, scan_id = outcome
         display_time = _format_display_time(completed_at)
-        self.results_view.set_results(results, timestamp=display_time)
+        self.results_view.set_results(
+            results,
+            timestamp=display_time,
+            scan_id=scan_id,
+            root_directory=self._baseline.root_directory,
+        )
         self.last_scan_label.configure(text=f"Last scan: {display_time}")
 
         has_errors = any(result.status == ScanStatus.ERROR for result in results)
@@ -397,6 +414,39 @@ class MainWindow(ctk.CTk):
                 "Check the application log for details."
             ),
         )
+
+    # ------------------------------------------------------------------
+    # Scan history (PROJECT_SPEC.md section 31 - Run 6)
+    # ------------------------------------------------------------------
+
+    def _on_view_scan_history(self) -> None:
+        if self._baseline is None or self._scan_in_progress:
+            return
+
+        scans = list_scans(self._connection, baseline_id=self._baseline.baseline_id)
+        if not scans:
+            dialogs.show_info(
+                self,
+                "Scan History",
+                "No scans have been run yet for this baseline.",
+            )
+            return
+
+        ScanHistoryDialog(self, scans, on_select=self._on_history_scan_selected)
+
+    def _on_history_scan_selected(self, scan) -> None:
+        from core.scanner import get_scan_results
+
+        results = get_scan_results(self._connection, scan.scan_id)
+        display_time = _format_display_time(scan.completed_at) if scan.completed_at else "unknown"
+        self.results_view.set_results(
+            results,
+            timestamp=display_time,
+            scan_id=scan.scan_id,
+            root_directory=self._baseline.root_directory if self._baseline else "",
+        )
+        self.last_scan_label.configure(text=f"Last scan: {display_time} (from history)")
+        self.status_label.configure(text="Viewing scan history")
 
     # ------------------------------------------------------------------
     # Background task plumbing
@@ -468,6 +518,9 @@ class MainWindow(ctk.CTk):
             state=state if self._directory is not None else "disabled"
         )
         self.scan_now_button.configure(state=state if self._baseline is not None else "disabled")
+        self.scan_history_button.configure(
+            state=state if self._baseline is not None else "disabled"
+        )
 
     # ------------------------------------------------------------------
     # Shutdown
