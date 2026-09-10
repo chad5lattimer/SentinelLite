@@ -8,16 +8,18 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) through Run 5 (GUI Integration) complete.
+> **Status:** Run 1 (Foundation) through Run 6 (Reporting) complete.
 > The core engine can recursively enumerate a directory, compute SHA-256
 > hashes, create/save/load a baseline, run a scan that classifies every
 > file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and persist scan history
-> in a local SQLite database. The CustomTkinter GUI is now wired to all of
+> in a local SQLite database. The CustomTkinter GUI is wired to all of
 > this: pick a folder, create a baseline (with a confirmation before
 > replacing an existing one), run a scan on a background thread so the UI
-> never freezes, and view a filterable results table with summary counts.
-> CSV/JSON export and packaging land in Runs 6-7. See
-> [`status/`](status/) for per-run progress notes.
+> never freezes, view a filterable results table with summary counts, and
+> export the results of the last scan to CSV or JSON. Optional Windows
+> scheduled scanning was deferred (see `status/status_2026-09-10.md`).
+> Packaging lands in Run 7. See [`status/`](status/) for per-run progress
+> notes.
 
 ## Requirements
 
@@ -76,7 +78,7 @@ sentinellite/
 ├── gui/                 # CustomTkinter GUI (presentation only): main_window,
 │                          results_view (table + filters), dialogs (folder
 │                          picker, confirmations, error/info boxes)
-├── reports/              # CSV/JSON export
+├── reports/              # CSV/JSON export (reports/exporter.py)
 ├── tests/               # pytest test suite
 ├── status/               # Per-run development status reports
 ├── assets/, data/, logs/ # Static assets and local runtime data

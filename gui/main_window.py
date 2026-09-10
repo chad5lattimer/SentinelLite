@@ -39,6 +39,7 @@ from core.models import ScanStatus
 from core.scanner import ScanResult, run_scan, save_scan
 from gui import dialogs
 from gui.results_view import ResultsView
+from reports import exporter
 from storage.database import connect as connect_db
 from storage.database import get_connection
 
@@ -88,6 +89,12 @@ class MainWindow(ctk.CTk):
         self._directory: Path | None = None
         self._baseline: Baseline | None = None
         self._scan_in_progress = False
+
+        # The most recently completed scan, kept so "Export CSV"/"Export
+        # JSON" (section 15) can re-serialize it without a second scan.
+        self._last_scan_id: int | None = None
+        self._last_scan_results: list[ScanResult] = []
+        self._last_scan_timestamp: str = ""
 
         PATHS.ensure_directories()
         self._db_path: Path = db_path or PATHS.database_path
@@ -208,7 +215,9 @@ class MainWindow(ctk.CTk):
         section.grid_remove()  # hidden until a scan/baseline creation starts
 
     def _build_results_section(self) -> None:
-        self.results_view = ResultsView(self)
+        self.results_view = ResultsView(
+            self, on_export_csv=self._on_export_csv, on_export_json=self._on_export_json
+        )
         self.results_view.grid(row=5, column=0, padx=20, pady=(0, 10), sticky="nsew")
 
     def _build_status_section(self) -> None:
@@ -250,6 +259,7 @@ class MainWindow(ctk.CTk):
 
         self._baseline = find_baseline_for_directory(self._connection, self._directory)
         self.results_view.clear()
+        self._clear_last_scan()
         self.last_scan_label.configure(text="Last scan: never")
 
         if self._baseline is not None:
@@ -305,6 +315,7 @@ class MainWindow(ctk.CTk):
         self._show_baseline_ready(baseline)
         self.scan_now_button.configure(state="normal")
         self.results_view.clear()
+        self._clear_last_scan()
         self.last_scan_label.configure(text="Last scan: never")
         self.status_label.configure(text="Baseline Ready")
         dialogs.show_info(
@@ -349,27 +360,33 @@ class MainWindow(ctk.CTk):
             on_error=self._on_scan_error,
         )
 
-    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str]:
+    def _run_scan_worker(self, progress_callback) -> tuple[list[ScanResult], str, int]:
         started_at = datetime.now(timezone.utc).isoformat()
         results = run_scan(self._baseline, progress_callback=progress_callback)
         completed_at = datetime.now(timezone.utc).isoformat()
         # Runs on a background thread -- open a connection scoped to this
         # call rather than sharing self._connection (see class docstring).
         with connect_db(self._db_path) as worker_connection:
-            save_scan(
+            scan_id = save_scan(
                 worker_connection,
                 baseline_id=self._baseline.baseline_id,
                 started_at=started_at,
                 results=results,
                 completed_at=completed_at,
             )
-        return results, completed_at
+        return results, completed_at, scan_id
 
-    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str]) -> None:
-        results, completed_at = outcome
+    def _on_scan_complete(self, outcome: tuple[list[ScanResult], str, int]) -> None:
+        results, completed_at, scan_id = outcome
         display_time = _format_display_time(completed_at)
         self.results_view.set_results(results, timestamp=display_time)
         self.last_scan_label.configure(text=f"Last scan: {display_time}")
+
+        # Kept so "Export CSV"/"Export JSON" can re-serialize this exact
+        # scan (section 15) without re-running it.
+        self._last_scan_id = scan_id
+        self._last_scan_results = results
+        self._last_scan_timestamp = completed_at
 
         has_errors = any(result.status == ScanStatus.ERROR for result in results)
         has_changes = any(
@@ -397,6 +414,68 @@ class MainWindow(ctk.CTk):
                 "Check the application log for details."
             ),
         )
+
+    def _clear_last_scan(self) -> None:
+        self._last_scan_id = None
+        self._last_scan_results = []
+        self._last_scan_timestamp = ""
+
+    # ------------------------------------------------------------------
+    # Export (PROJECT_SPEC.md section 15)
+    # ------------------------------------------------------------------
+
+    def _on_export_csv(self) -> None:
+        self._export_results("csv")
+
+    def _on_export_json(self) -> None:
+        self._export_results("json")
+
+    def _export_results(self, file_type: str) -> None:
+        # Buttons are disabled with no results (gui/results_view.py), but
+        # guard here too since callbacks can be invoked directly in tests.
+        if self._last_scan_id is None or not self._last_scan_results:
+            return
+
+        default_name = exporter.default_export_filename(
+            self._last_scan_id, self._last_scan_timestamp, file_type
+        )
+        destination = dialogs.choose_export_destination(
+            self,
+            file_type=file_type,
+            initial_dir=str(PATHS.exports_dir),
+            initial_file=default_name,
+        )
+        if not destination:
+            return
+
+        directory = self._baseline.root_directory if self._baseline else str(self._directory)
+        try:
+            if file_type == "csv":
+                exporter.export_csv(
+                    self._last_scan_results, Path(destination), timestamp=self._last_scan_timestamp
+                )
+            else:
+                exporter.export_json(
+                    self._last_scan_results,
+                    Path(destination),
+                    scan_id=self._last_scan_id,
+                    timestamp=self._last_scan_timestamp,
+                    root_directory=directory,
+                )
+        except OSError as error:
+            logger.error("Export to %s failed.", destination, exc_info=error)
+            dialogs.show_error(
+                self,
+                "Export Failed",
+                (
+                    f"The application could not write the export file:\n\n{destination}\n\n"
+                    "Check the application log for details."
+                ),
+            )
+            return
+
+        # exporter.export_csv/export_json already logged the write itself.
+        dialogs.show_info(self, "Export Complete", f"Results exported to:\n\n{destination}")
 
     # ------------------------------------------------------------------
     # Background task plumbing

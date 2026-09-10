@@ -237,3 +237,109 @@ def test_results_view_filter_shows_only_matching_status():
         assert len(view.tree.get_children()) == 3
     finally:
         root.destroy()
+
+
+def test_results_view_export_buttons_enable_with_results_and_invoke_callbacks():
+    _require_display()
+
+    from core.scanner import ScanResult
+    from gui.results_view import ResultsView
+
+    import tkinter as tk
+
+    root = tk.Tk()
+    try:
+        csv_calls = []
+        json_calls = []
+        view = ResultsView(
+            root, on_export_csv=lambda: csv_calls.append(True), on_export_json=lambda: json_calls.append(True)
+        )
+
+        # No results yet -- export is not meaningful.
+        assert str(view.export_csv_button.cget("state")) == "disabled"
+        assert str(view.export_json_button.cget("state")) == "disabled"
+
+        view.set_results([ScanResult(path="a.txt", status=ScanStatus.NEW, current_hash="a", size=1)])
+        assert str(view.export_csv_button.cget("state")) == "normal"
+        assert str(view.export_json_button.cget("state")) == "normal"
+
+        view._handle_export_csv()
+        view._handle_export_json()
+        assert csv_calls == [True]
+        assert json_calls == [True]
+
+        # Clearing the results (e.g. a new folder is selected) disables
+        # export again -- there is nothing left to export.
+        view.clear()
+        assert str(view.export_csv_button.cget("state")) == "disabled"
+        assert str(view.export_json_button.cget("state")) == "disabled"
+    finally:
+        root.destroy()
+
+
+def test_export_csv_and_json_write_files_for_last_scan(tmp_path, gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 31 (Run 6): Scan -> View results -> Export
+    CSV -> Export JSON, and the exported files contain accurate results.
+    """
+    import csv
+    import json
+
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+
+    # Nothing to export before a scan has run.
+    assert window._last_scan_id is None
+    window._on_export_csv()  # must be a no-op, not raise
+
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    (monitored / "b.txt").write_text("two")
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    assert window._last_scan_id is not None
+    assert len(window._last_scan_results) == 2
+
+    csv_destination = tmp_path / "results.csv"
+    json_destination = tmp_path / "results.json"
+    destinations = iter([str(csv_destination), str(json_destination)])
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: next(destinations))
+
+    window._on_export_csv()
+    window._on_export_json()
+
+    with csv_destination.open(newline="", encoding="utf-8") as file:
+        rows = list(csv.DictReader(file))
+    assert {row["path"] for row in rows} == {"a.txt", "b.txt"}
+
+    payload = json.loads(json_destination.read_text(encoding="utf-8"))
+    assert payload["scan_id"] == window._last_scan_id
+    assert payload["root_directory"] == str(window._baseline.root_directory)
+    assert {row["path"] for row in payload["results"]} == {"a.txt", "b.txt"}
+
+
+def test_export_cancelled_dialog_does_not_write_a_file(tmp_path, gui_window, monkeypatch):
+    from gui import dialogs
+
+    monitored = tmp_path / "Monitored"
+    monitored.mkdir()
+    (monitored / "a.txt").write_text("one")
+
+    window = gui_window
+    window._set_directory(monitored)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: None)
+    # Must not raise even though the user cancelled the save dialog.
+    window._on_export_csv()
+    window._on_export_json()
