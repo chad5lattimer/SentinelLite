@@ -8,18 +8,20 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) through Run 6 (Reporting) complete.
-> The core engine can recursively enumerate a directory, compute SHA-256
-> hashes, create/save/load a baseline, run a scan that classifies every
-> file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and persist scan history
-> in a local SQLite database. The CustomTkinter GUI is wired to all of
-> this: pick a folder, create a baseline (with a confirmation before
-> replacing an existing one), run a scan on a background thread so the UI
-> never freezes, view a filterable results table with summary counts, and
+> **Status:** All 7 planned runs complete — the SentinelLite MVP is
+> feature-complete per `PROJECT_SPEC.md`. The core engine recursively
+> enumerates a directory, computes SHA-256 hashes, creates/saves/loads a
+> baseline, and runs a scan that classifies every file as
+> NEW/MODIFIED/DELETED/UNCHANGED/ERROR, persisting scan history in a
+> local SQLite database. The CustomTkinter GUI is wired to all of this:
+> pick a folder, create a baseline (with a confirmation before replacing
+> an existing one), run a scan on a background thread so the UI never
+> freezes, view a filterable results table with summary counts, and
 > export the results of the last scan to CSV or JSON. Optional Windows
 > scheduled scanning was deferred (see `status/status_2026-09-10.md`).
-> Packaging lands in Run 7. See [`status/`](status/) for per-run progress
-> notes.
+> Run 7 added `build_exe.bat` (PyInstaller packaging) and verified the
+> build (see `status/status_2026-09-10-run7.md`). See
+> [`status/`](status/) for per-run progress notes.
 
 ## Requirements
 
@@ -93,8 +95,25 @@ that lives in `core/`, per the layered architecture in
 
 ## Packaging
 
-Packaging into `SentinelLite.exe` via PyInstaller is implemented in a
-later development run (see `PROJECT_SPEC.md` section 21 and section 32).
+Build a standalone Windows executable with PyInstaller (`PROJECT_SPEC.md`
+section 21):
+
+```bat
+REM From an activated virtual environment with requirements.txt installed
+build_exe.bat
+```
+
+This runs:
+
+```
+pyinstaller --noconfirm --windowed --name SentinelLite app.py
+```
+
+and produces `dist\SentinelLite\SentinelLite.exe`. `build_exe.bat`
+cleans any previous `build\`/`dist\` output first and fails loudly if
+`pyinstaller` isn't on `PATH` or the executable wasn't produced.
+Run the section 33 Final Acceptance Test against the packaged build
+before shipping it.
 
 ## Security Notes
 
