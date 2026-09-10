@@ -8,8 +8,9 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) through Run 6 (Reporting) complete.
-> The core engine can recursively enumerate a directory, compute SHA-256
+> **Status:** Run 1 (Foundation) through Run 7 (QA and Packaging)
+> complete. The MVP defined in `PROJECT_SPEC.md` section 40 is done. The
+> core engine can recursively enumerate a directory, compute SHA-256
 > hashes, create/save/load a baseline, run a scan that classifies every
 > file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and persist scan history
 > in a local SQLite database. The CustomTkinter GUI is wired to all of
@@ -17,9 +18,11 @@ specification and development plan.
 > replacing an existing one), run a scan on a background thread so the UI
 > never freezes, view a filterable results table with summary counts, and
 > export the results of the last scan to CSV or JSON. Optional Windows
-> scheduled scanning was deferred (see `status/status_2026-09-10.md`).
-> Packaging lands in Run 7. See [`status/`](status/) for per-run progress
-> notes.
+> scheduled scanning was deferred (see `status/status_2026-09-10.md`). The
+> full test suite (including an automated version of the PROJECT_SPEC.md
+> section 33 Final Acceptance Test, driven through the real GUI) passes,
+> and `build_exe.bat` packages the app with PyInstaller (see "Packaging"
+> below). See [`status/`](status/) for per-run progress notes.
 
 ## Requirements
 
@@ -83,6 +86,7 @@ sentinellite/
 ├── status/               # Per-run development status reports
 ├── assets/, data/, logs/ # Static assets and local runtime data
 ├── requirements.txt
+├── build_exe.bat        # PyInstaller packaging script (run on Windows)
 ├── README.md
 └── PROJECT_SPEC.md
 ```
@@ -93,8 +97,37 @@ that lives in `core/`, per the layered architecture in
 
 ## Packaging
 
-Packaging into `SentinelLite.exe` via PyInstaller is implemented in a
-later development run (see `PROJECT_SPEC.md` section 21 and section 32).
+Build a standalone Windows executable with PyInstaller (PROJECT_SPEC.md
+sections 21 and 32). PyInstaller does not cross-compile, so this must be
+run **on Windows**:
+
+```bat
+REM From a Windows machine, with dependencies installed (see
+REM "Development Setup" above):
+build_exe.bat
+```
+
+This runs:
+
+```bat
+pyinstaller --noconfirm --windowed --name SentinelLite app.py
+```
+
+and produces:
+
+```
+dist\
+└── SentinelLite\
+    └── SentinelLite.exe
+```
+
+A single-file build can be attempted instead with `--onefile`, but the
+`onedir` build above is preferred for reliability (section 21). The
+packaging command itself (module discovery, hidden imports, bundling
+`customtkinter`/`tkinter`/`sqlite3`) has been smoke-tested by building and
+launching a non-Windows binary from the same `app.py` entry point; the
+resulting `SentinelLite.exe` should still be verified once built on a
+real Windows machine, per the section 33 Final Acceptance Test.
 
 ## Security Notes
 

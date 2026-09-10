@@ -343,3 +343,94 @@ def test_export_cancelled_dialog_does_not_write_a_file(tmp_path, gui_window, mon
     # Must not raise even though the user cancelled the save dialog.
     window._on_export_csv()
     window._on_export_json()
+
+
+def test_final_acceptance_section_33(tmp_path, gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 33 -- the Final Acceptance Test, performed
+    exactly as specified end-to-end through the real GUI (Run 7).
+
+    TestFolder\\
+        unchanged.txt
+        modified.txt
+        deleted.txt
+
+    -> create a baseline -> leave unchanged.txt untouched, modify
+    modified.txt, delete deleted.txt, create new.txt -> run a scan ->
+    verify each status, the exact summary counts, and that both the CSV
+    and JSON exports of the scan are accurate.
+    """
+    import csv
+    import json
+
+    from gui import dialogs
+
+    test_folder = tmp_path / "TestFolder"
+    test_folder.mkdir()
+    (test_folder / "unchanged.txt").write_text("unchanged content")
+    (test_folder / "modified.txt").write_text("original content")
+    (test_folder / "deleted.txt").write_text("will be deleted")
+
+    window = gui_window
+    window._set_directory(test_folder)
+    window._on_create_baseline()
+    _pump_until(window, lambda: not window._scan_in_progress)
+    assert window._baseline is not None
+    assert window._baseline.file_count == 3
+
+    (test_folder / "modified.txt").write_text("changed content")
+    (test_folder / "deleted.txt").unlink()
+    (test_folder / "new.txt").write_text("brand new file")
+
+    window._on_scan_now()
+    _pump_until(window, lambda: not window._scan_in_progress)
+
+    results_by_path = {result.path: result.status for result in window.results_view._results}
+    assert results_by_path["unchanged.txt"] == ScanStatus.UNCHANGED
+    assert results_by_path["modified.txt"] == ScanStatus.MODIFIED
+    assert results_by_path["deleted.txt"] == ScanStatus.DELETED
+    assert results_by_path["new.txt"] == ScanStatus.NEW
+
+    summary_text = {
+        name: label.cget("text") for name, label in window.results_view._summary_labels.items()
+    }
+    assert summary_text == {
+        "Modified": "Modified: 1",
+        "New": "New: 1",
+        "Deleted": "Deleted: 1",
+        "Unchanged": "Unchanged: 1",
+        "Errors": "Errors: 0",
+    }
+    assert window.status_label.cget("text") == "⚠ Changes Detected"
+
+    csv_destination = tmp_path / "acceptance.csv"
+    json_destination = tmp_path / "acceptance.json"
+    destinations = iter([str(csv_destination), str(json_destination)])
+    monkeypatch.setattr(dialogs, "choose_export_destination", lambda *a, **k: next(destinations))
+
+    window._on_export_csv()
+    window._on_export_json()
+
+    with csv_destination.open(newline="", encoding="utf-8") as file:
+        csv_rows = {row["path"]: row["status"] for row in csv.DictReader(file)}
+    assert csv_rows == {
+        "unchanged.txt": "UNCHANGED",
+        "modified.txt": "MODIFIED",
+        "deleted.txt": "DELETED",
+        "new.txt": "NEW",
+    }
+
+    payload = json.loads(json_destination.read_text(encoding="utf-8"))
+    assert payload["summary"] == {
+        "modified": 1,
+        "new": 1,
+        "deleted": 1,
+        "unchanged": 1,
+        "errors": 0,
+    }
+    json_rows = {row["path"]: row["status"] for row in payload["results"]}
+    assert json_rows == {
+        "unchanged.txt": "UNCHANGED",
+        "modified.txt": "MODIFIED",
+        "deleted.txt": "DELETED",
+        "new.txt": "NEW",
+    }
