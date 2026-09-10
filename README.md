@@ -8,18 +8,23 @@ new, modified, deleted, and unchanged files.
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for the full technical
 specification and development plan.
 
-> **Status:** Run 1 (Foundation) through Run 6 (Reporting) complete.
-> The core engine can recursively enumerate a directory, compute SHA-256
-> hashes, create/save/load a baseline, run a scan that classifies every
-> file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and persist scan history
-> in a local SQLite database. The CustomTkinter GUI is wired to all of
-> this: pick a folder, create a baseline (with a confirmation before
-> replacing an existing one), run a scan on a background thread so the UI
-> never freezes, view a filterable results table with summary counts, and
-> export the results of the last scan to CSV or JSON. Optional Windows
-> scheduled scanning was deferred (see `status/status_2026-09-10.md`).
-> Packaging lands in Run 7. See [`status/`](status/) for per-run progress
-> notes.
+> **Status:** All seven scheduled runs are complete (Foundation through QA
+> and Packaging). The core engine recursively enumerates a directory,
+> computes SHA-256 hashes, creates/saves/loads a baseline, runs a scan
+> that classifies every file as NEW/MODIFIED/DELETED/UNCHANGED/ERROR, and
+> persists scan history in a local SQLite database. The CustomTkinter GUI
+> is wired to all of this: pick a folder, create a baseline (with a
+> confirmation before replacing an existing one), run a scan on a
+> background thread so the UI never freezes, view a filterable results
+> table with summary counts, and export the results of the last scan to
+> CSV or JSON. Optional Windows scheduled scanning was deferred (see
+> `status/status_2026-09-10.md`). `PROJECT_SPEC.md` section 33's Final
+> Acceptance Test passes end-to-end, and `build_exe.bat` packages the
+> application with PyInstaller (verified with a Linux smoke build in this
+> development environment; an actual Windows `.exe` build is otherwise
+> unverified, since no Windows host is available here -- see
+> `status/status_2026-09-10-run7.md`). See [`status/`](status/) for
+> per-run progress notes.
 
 ## Requirements
 
@@ -93,8 +98,33 @@ that lives in `core/`, per the layered architecture in
 
 ## Packaging
 
-Packaging into `SentinelLite.exe` via PyInstaller is implemented in a
-later development run (see `PROJECT_SPEC.md` section 21 and section 32).
+Build a standalone Windows executable with PyInstaller (`PROJECT_SPEC.md`
+section 21):
+
+```bat
+REM From a Windows checkout, inside the project's virtual environment:
+build_exe.bat
+```
+
+This runs:
+
+```bat
+pyinstaller --noconfirm --windowed --name SentinelLite --add-data "assets;assets" app.py
+```
+
+and produces `dist\SentinelLite\SentinelLite.exe`. Application data
+(database, logs, exports) is written to `%LOCALAPPDATA%\SentinelLite\`,
+never into the install directory (section 22), so the `dist\SentinelLite`
+folder can be copied or reinstalled without losing or leaking prior scan
+data.
+
+`build_exe.bat` has been smoke-tested on Linux (the packaging pipeline
+resolves all imports, PyInstaller's CustomTkinter/Tk hooks run cleanly,
+and the resulting binary launches and creates its app-data directory
+correctly) but has not been run on an actual Windows machine, since this
+development environment has none available. Building and launching the
+real `SentinelLite.exe` on Windows 10/11 is the one remaining
+verification step before the packaged deliverable itself is confirmed.
 
 ## Security Notes
 
