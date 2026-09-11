@@ -182,6 +182,35 @@ def test_scan_of_removed_directory_reports_error_not_crash(tmp_path, gui_window)
     assert window.status_label.cget("text") == "✕ Scan Error"
 
 
+def test_uncaught_callback_exception_shows_fatal_error_not_crash(gui_window, monkeypatch):
+    """PROJECT_SPEC.md section 24 ("Fatal application error") + section 18.
+
+    An exception raised synchronously inside a Tk callback (bypassing the
+    background-task error handling entirely) must not crash the app or
+    vanish silently -- it must be logged and surfaced to the user via
+    ``report_callback_exception`` (gui/main_window.py).
+    """
+    import sys
+
+    from gui import dialogs
+
+    window = gui_window
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        dialogs, "show_error", lambda parent, title, message: shown.append((title, message))
+    )
+
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        window.report_callback_exception(*sys.exc_info())
+
+    assert shown, "Expected a user-facing error dialog for the uncaught exception."
+    assert "unexpected error" in shown[0][1].lower()
+    # The window must remain fully usable afterwards.
+    assert window.winfo_exists()
+
+
 def test_switching_folders_finds_each_folders_own_baseline(tmp_path, gui_window):
     folder_a = tmp_path / "A"
     folder_a.mkdir()

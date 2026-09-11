@@ -103,6 +103,32 @@ class MainWindow(ctk.CTk):
         self._build_layout()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """Handle an exception raised inside a Tk callback (e.g. a button
+        command) that reaches Tk's dispatcher uncaught.
+
+        Tk's default implementation prints the traceback to stderr and
+        keeps running -- invisible once packaged with ``--windowed``
+        (section 21), which has no console, so the window would just look
+        unresponsive. This surfaces section 24's "Fatal application error"
+        state instead: log the full traceback and tell the user plainly.
+        Background-thread work (baseline creation, scanning) already has
+        its own error handling via ``_start_background_task`` and does not
+        go through this path.
+        """
+        logger.error("Unhandled exception in a GUI callback.", exc_info=(exc, val, tb))
+        try:
+            dialogs.show_error(
+                self,
+                "Unexpected Error",
+                (
+                    "The application encountered an unexpected error.\n\n"
+                    "Check the application log for details."
+                ),
+            )
+        except Exception:
+            logger.exception("Failed to show the fatal-error dialog.")
+
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
