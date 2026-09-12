@@ -166,6 +166,58 @@ def test_create_baseline_excludes_unreadable_files(tmp_path):
     assert {error.path for error in errors} == {"blocked.txt"}
 
 
+def test_create_baseline_logs_a_warning_for_each_unreadable_file(tmp_path, monkeypatch, caplog):
+    """PROJECT_SPEC.md section 7.3: unreadable files must be logged, not
+    silently dropped. The chmod-based test above skips when running as
+    root (permission bits are unenforced), so it never actually exercises
+    this branch in that environment -- this test instead monkeypatches
+    ``scan_directory`` itself, so it runs (and closes the gap) everywhere.
+    """
+    import logging
+
+    import core.baseline as baseline_module
+    from core.models import FileError, FileRecord
+
+    fake_records = [FileRecord(path="readable.txt", sha256="abc", size=1, modified_time=0.0)]
+    fake_errors = [FileError(path="blocked.txt", message="Permission denied")]
+    monkeypatch.setattr(
+        baseline_module, "scan_directory", lambda *a, **k: (fake_records, fake_errors)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        baseline, errors = create_baseline(tmp_path)
+
+    assert errors == fake_errors
+    assert baseline.file_count == 1
+    assert any(
+        "Baseline excludes unreadable file" in record.message and "blocked.txt" in record.message
+        for record in caplog.records
+    )
+
+
+def test_find_baseline_for_directory_handles_baseline_deleted_after_lookup(tmp_path, monkeypatch):
+    """A defensive fallback for a narrow race: the directory-to-id lookup
+    finds a baseline row, but it is gone by the time it is loaded (e.g.
+    deleted concurrently). This must return ``None`` like "no baseline",
+    not propagate ``BaselineNotFoundError``.
+    """
+    import core.baseline as baseline_module
+
+    _write(tmp_path / "a.txt", b"one")
+    db_path = tmp_path / "sentinellite.db"
+
+    with connect(db_path) as conn:
+        baseline, _ = create_baseline(tmp_path)
+        save_baseline(conn, baseline)
+
+        def _always_missing(*a, **k):
+            raise BaselineNotFoundError("gone")
+
+        monkeypatch.setattr(baseline_module, "load_baseline", _always_missing)
+
+        assert find_baseline_for_directory(conn, tmp_path) is None
+
+
 def test_find_baseline_for_directory_matches_per_folder(tmp_path):
     """GUI folder-switching (PROJECT_SPEC.md section 24) needs each
     monitored folder to find its own most recent baseline, not just the
