@@ -64,7 +64,7 @@ def _pump_until(window, predicate, timeout: float = 5.0) -> None:
 
 @pytest.fixture
 def gui_window(tmp_path, monkeypatch):
-    _require_display()
+    tk = _require_display()
 
     from gui import dialogs
     from gui.main_window import MainWindow
@@ -77,7 +77,13 @@ def gui_window(tmp_path, monkeypatch):
     try:
         yield window
     finally:
-        window.destroy()
+        try:
+            window.destroy()
+        except tk.TclError:
+            # A test may have already destroyed the window itself (e.g. to
+            # exercise the "user closes the window mid-task" scenario) --
+            # that is not a teardown failure.
+            pass
 
 
 def test_full_workflow_select_baseline_modify_scan(tmp_path, gui_window):
@@ -211,6 +217,46 @@ def test_uncaught_callback_exception_shows_fatal_error_not_crash(gui_window, mon
     assert window.winfo_exists()
 
 
+@pytest.mark.parametrize("raised", ["RuntimeError", "TclError"])
+def test_after_safe_swallows_a_destroyed_windows_after_call(raised):
+    """A background scan/baseline thread's completion (or progress-update)
+    callback races against the user closing the window mid-task: the
+    worker thread calls ``self.after(...)`` (via ``MainWindow._after_safe``,
+    used throughout ``_start_background_task``) after ``destroy()`` has
+    already torn down the window's Tcl interpreter. Depending on timing,
+    that raises either a plain ``RuntimeError`` ("main thread is not in
+    main loop") or a ``tkinter.TclError`` ("application has been
+    destroyed") on the worker thread itself, with nobody left to show it
+    to -- PROJECT_SPEC.md section 35 warns against exactly this kind of
+    silent-looking failure. ``_after_safe`` must swallow either instead of
+    letting it escape.
+
+    This exercises ``_after_safe`` directly against a stand-in for a
+    destroyed window (rather than actually creating and destroying a real
+    ``MainWindow``/Tcl interpreter), so it needs no display and cannot
+    destabilize the timing-sensitive Tk event loop used by other tests in
+    this file.
+    """
+    tk = pytest.importorskip("tkinter")
+    exception_type = RuntimeError if raised == "RuntimeError" else tk.TclError
+
+    from gui.main_window import MainWindow
+
+    class _DestroyedWindowStandIn:
+        def after(self, delay, callback):
+            raise exception_type("simulated: window already destroyed")
+
+    calls: list[str] = []
+    # Must not raise even though the "window" is already gone -- this is
+    # exactly what a worker thread calls after the real window closes
+    # mid-task.
+    MainWindow._after_safe(_DestroyedWindowStandIn(), lambda: calls.append("ran"))
+
+    # Nothing left to update, so the callback itself must not have run
+    # either -- only that no exception escaped.
+    assert calls == []
+
+
 def test_switching_folders_finds_each_folders_own_baseline(tmp_path, gui_window):
     folder_a = tmp_path / "A"
     folder_a.mkdir()
@@ -264,6 +310,45 @@ def test_results_view_filter_shows_only_matching_status():
 
         view._on_filter_changed("All")
         assert len(view.tree.get_children()) == 3
+    finally:
+        root.destroy()
+
+
+def test_results_view_column_header_sorts_rows_and_toggles_direction():
+    """PROJECT_SPEC.md section 12: the results table must be sortable.
+    Clicking a column heading (wired to ``ResultsView._sort_by`` in
+    ``gui/results_view.py``) sorts the visible rows by that column, and
+    clicking the same heading again reverses the order."""
+    _require_display()
+
+    from core.scanner import ScanResult
+    from gui.results_view import ResultsView
+
+    import tkinter as tk
+
+    root = tk.Tk()
+    try:
+        view = ResultsView(root)
+        view.set_results(
+            [
+                ScanResult(path="c.txt", status=ScanStatus.NEW, current_hash="c", size=3),
+                ScanResult(path="a.txt", status=ScanStatus.NEW, current_hash="a", size=1),
+                ScanResult(path="b.txt", status=ScanStatus.NEW, current_hash="b", size=2),
+            ]
+        )
+
+        def displayed_paths():
+            return [view.tree.item(item, "values")[1] for item in view.tree.get_children()]
+
+        # Rows start in insertion order.
+        assert displayed_paths() == ["c.txt", "a.txt", "b.txt"]
+
+        view._sort_by("file")
+        assert displayed_paths() == ["a.txt", "b.txt", "c.txt"]
+
+        # Sorting the same column again reverses the order.
+        view._sort_by("file")
+        assert displayed_paths() == ["c.txt", "b.txt", "a.txt"]
     finally:
         root.destroy()
 

@@ -48,6 +48,42 @@ def test_app_paths_resolve_under_tmp(tmp_path, monkeypatch):
     importlib.reload(config)
 
 
+def test_default_app_data_dir_on_windows_uses_localappdata(monkeypatch, tmp_path):
+    """Covers PROJECT_SPEC.md section 22's Windows target path
+    (%LOCALAPPDATA%\\SentinelLite) via the ``LOCALAPPDATA`` branch of
+    ``_default_app_data_dir``, exercised here on non-Windows CI by
+    monkeypatching ``sys.platform``."""
+    import config
+
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+
+    assert config._default_app_data_dir() == tmp_path / "LocalAppData" / "SentinelLite"
+
+
+def test_default_app_data_dir_on_windows_falls_back_without_localappdata(monkeypatch):
+    """When ``LOCALAPPDATA`` is unset, fall back to ``~/AppData/Local``."""
+    import config
+
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+
+    assert config._default_app_data_dir() == config.Path.home() / "AppData" / "Local" / "SentinelLite"
+
+
+def test_default_app_data_dir_on_macos_uses_application_support(monkeypatch):
+    """Covers the macOS branch of ``_default_app_data_dir`` (development
+    machines only -- the packaged target is Windows, per section 4.1)."""
+    import config
+
+    monkeypatch.setattr(config.sys, "platform", "darwin")
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+
+    assert config._default_app_data_dir() == config.Path.home() / "Library" / "Application Support" / "SentinelLite"
+
+
 def test_configure_logging_creates_log_file(tmp_path):
     import config
 

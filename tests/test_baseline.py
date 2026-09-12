@@ -198,6 +198,35 @@ def test_find_baseline_for_directory_matches_per_folder(tmp_path):
         assert find_baseline_for_directory(conn, tmp_path / "NoBaselineHere") is None
 
 
+def test_find_baseline_for_directory_handles_baseline_deleted_after_lookup(tmp_path, monkeypatch):
+    """Covers the defensive race-condition branch in
+    ``find_baseline_for_directory``: the directory index still names a
+    baseline id, but the baseline itself is gone (e.g. deleted between the
+    id lookup and the load) by the time it is loaded. This must return
+    ``None`` rather than let ``BaselineNotFoundError`` propagate, since
+    callers treat ``None`` as "no baseline for this folder"
+    (PROJECT_SPEC.md section 24)."""
+    from core import baseline as baseline_module
+
+    monitored = tmp_path / "Monitored"
+    _write(monitored / "a.txt", b"one")
+    db_path = tmp_path / "sentinellite.db"
+
+    with connect(db_path) as conn:
+        created, _ = create_baseline(monitored)
+        save_baseline(conn, created)
+
+        # Simulate the index still pointing at a baseline id that no
+        # longer resolves (the row was deleted, or never existed).
+        monkeypatch.setattr(
+            baseline_module.repository,
+            "get_latest_baseline_id_for_directory",
+            lambda connection, directory: 999_999,
+        )
+
+        assert find_baseline_for_directory(conn, monitored) is None
+
+
 def test_baseline_file_count_property():
     baseline = Baseline(
         root_directory="/tmp/x",

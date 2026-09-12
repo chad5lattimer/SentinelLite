@@ -22,6 +22,7 @@ import logging
 import sqlite3
 import threading
 import time
+import tkinter as tk
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -537,7 +538,7 @@ class MainWindow(ctk.CTk):
             if now - last_update[0] < _PROGRESS_UPDATE_INTERVAL_SECONDS:
                 return
             last_update[0] = now
-            self.after(0, lambda: self._update_progress(processed, current_path))
+            self._after_safe(lambda: self._update_progress(processed, current_path))
 
         def run() -> None:
             try:
@@ -548,11 +549,31 @@ class MainWindow(ctk.CTk):
                 # plain variable here -- otherwise the lambda below raises
                 # NameError once `self.after` actually invokes it.
                 failure = caught
-                self.after(0, lambda: self._finish_background_task(on_error, failure))
+                self._after_safe(lambda: self._finish_background_task(on_error, failure))
             else:
-                self.after(0, lambda: self._finish_background_task(on_success, result))
+                self._after_safe(lambda: self._finish_background_task(on_success, result))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _after_safe(self, callback: Callable[[], None]) -> None:
+        """Schedule ``callback`` on the GUI thread via ``self.after``,
+        tolerating the window having already been destroyed.
+
+        A background scan/baseline thread's completion (or progress
+        update) races against the user closing the window: if ``destroy()``
+        has already run by the time the worker thread finishes, ``self.after``
+        raises ``RuntimeError``/``TclError`` on that worker thread. Since
+        there is no window left to update, that failure is expected and
+        harmless -- but left unguarded it becomes an unhandled exception on
+        a background thread, exactly the kind of silent-looking failure
+        PROJECT_SPEC.md section 35 warns against papering over elsewhere.
+        Here there is nothing left to report to, so it is logged and
+        dropped rather than surfaced.
+        """
+        try:
+            self.after(0, callback)
+        except (RuntimeError, tk.TclError):
+            logger.debug("Window closed before a background task callback could run; ignoring.")
 
     def _update_progress(self, processed: int, current_path: str) -> None:
         self.progress_detail_label.configure(
