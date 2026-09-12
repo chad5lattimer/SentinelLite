@@ -8,11 +8,13 @@ symbolic links are not followed.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import stat
 
 import pytest
 
+import core.filesystem as filesystem
 from core.filesystem import scan_directory
 from core.models import FileError, FileRecord
 
@@ -79,6 +81,63 @@ def test_scan_directory_continues_after_permission_error(tmp_path):
     assert "readable.txt" in readable_paths
     assert "blocked.txt" in error_paths
     assert isinstance(errors[0], FileError)
+
+
+def test_scan_directory_logs_and_continues_when_a_directory_cannot_be_listed(tmp_path, monkeypatch, caplog):
+    """Exercise the ``onerror`` callback passed to ``os.walk`` directly.
+
+    ``test_scan_directory_continues_after_permission_error`` above covers
+    the same *behavior* via real permission bits, but that test skips when
+    running as root (permission bits are not enforced), which is the case
+    in this container. Simulating the failure via a monkeypatched
+    ``os.walk`` keeps this branch (PROJECT_SPEC.md section 8: "a directory
+    that cannot be listed is skipped with a logged warning rather than
+    aborting enumeration") covered regardless of the user running the
+    suite.
+    """
+    _write(tmp_path / "readable.txt", b"ok")
+    real_walk = os.walk
+
+    def fake_walk(top, onerror=None, followlinks=False):
+        if onerror is not None:
+            onerror(OSError(13, "Permission denied", str(tmp_path / "blocked")))
+        yield from real_walk(top, onerror=onerror, followlinks=followlinks)
+
+    monkeypatch.setattr(filesystem.os, "walk", fake_walk)
+
+    with caplog.at_level(logging.WARNING):
+        records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert errors == []
+    assert any("Cannot list directory" in message for message in caplog.messages)
+
+
+def test_scan_directory_records_error_when_a_file_cannot_be_hashed(tmp_path, monkeypatch):
+    """Exercise the ``OSError`` handling around per-file stat/hash directly.
+
+    Complements ``test_scan_directory_continues_after_permission_error``,
+    which skips when running as root. Forcing ``calculate_sha256`` to
+    raise covers the same "unreadable file is recorded, not fatal" branch
+    (PROJECT_SPEC.md section 7.3) independent of the OS permission model.
+    """
+    _write(tmp_path / "readable.txt", b"ok")
+    _write(tmp_path / "blocked.txt", b"secret")
+
+    def fake_calculate_sha256(path, **kwargs):
+        if path.name == "blocked.txt":
+            raise OSError(13, "Permission denied", str(path))
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(filesystem, "calculate_sha256", fake_calculate_sha256)
+
+    records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert len(errors) == 1
+    assert errors[0].path == "blocked.txt"
+    assert isinstance(errors[0], FileError)
+    assert "Permission denied" in errors[0].message
 
 
 def test_scan_directory_does_not_follow_symlinked_directories(tmp_path):

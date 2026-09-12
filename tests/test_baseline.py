@@ -12,10 +12,12 @@ missing-baseline and corrupted-baseline handling.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 
 import pytest
 
+import core.baseline as baseline_module
 from core.baseline import (
     Baseline,
     BaselineNotFoundError,
@@ -24,7 +26,8 @@ from core.baseline import (
     load_baseline,
     save_baseline,
 )
-from core.models import FileRecord
+from core.models import FileError, FileRecord
+from storage import repository
 from storage.database import DatabaseCorruptedError, connect
 
 
@@ -164,6 +167,43 @@ def test_create_baseline_excludes_unreadable_files(tmp_path):
 
     assert {record.path for record in baseline.files} == {"readable.txt"}
     assert {error.path for error in errors} == {"blocked.txt"}
+
+
+def test_create_baseline_logs_each_unreadable_file(tmp_path, monkeypatch, caplog):
+    """Exercise ``create_baseline``'s own warning-logging loop directly.
+
+    ``test_create_baseline_excludes_unreadable_files`` covers the same
+    behavior via real permission bits, but skips when running as root
+    (permission bits are not enforced), which is the case in this
+    container. Monkeypatching ``scan_directory`` keeps the "log a warning
+    per unreadable file" branch (PROJECT_SPEC.md section 7.3) covered
+    regardless of the user running the suite.
+    """
+    unreadable = FileError(path="blocked.txt", message="Permission denied")
+    monkeypatch.setattr(baseline_module, "scan_directory", lambda root, progress_callback=None, chunk_size=None: ([], [unreadable]))
+
+    with caplog.at_level(logging.WARNING):
+        baseline, errors = create_baseline(tmp_path)
+
+    assert baseline.files == ()
+    assert errors == [unreadable]
+    assert any("blocked.txt" in message for message in caplog.messages)
+
+
+def test_find_baseline_for_directory_handles_disappeared_baseline(tmp_path, monkeypatch):
+    """``find_baseline_for_directory`` must not propagate ``BaselineNotFoundError``.
+
+    Simulates the race where a directory-lookup finds a baseline id that
+    no longer resolves to a row (e.g. deleted between the lookup and the
+    load) by monkeypatching the lookup to return a nonexistent id;
+    ``load_baseline`` then genuinely raises, and the caller should get
+    ``None`` back rather than an exception (PROJECT_SPEC.md section 19).
+    """
+    db_path = tmp_path / "sentinellite.db"
+    with connect(db_path) as conn:
+        monkeypatch.setattr(repository, "get_latest_baseline_id_for_directory", lambda *a, **k: 999)
+
+        assert find_baseline_for_directory(conn, tmp_path) is None
 
 
 def test_find_baseline_for_directory_matches_per_folder(tmp_path):
