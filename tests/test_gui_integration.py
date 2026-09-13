@@ -35,7 +35,7 @@ def _require_display():
     return tk
 
 
-def _pump_until(window, predicate, timeout: float = 5.0) -> None:
+def _pump_until(window, predicate, timeout: float = 20.0) -> None:
     """Run the real Tk event loop until ``predicate()`` is true.
 
     This must drive an actual ``mainloop()`` rather than polling with
@@ -46,6 +46,20 @@ def _pump_until(window, predicate, timeout: float = 5.0) -> None:
     threads run under in the real app (``app.py`` calls
     ``window.mainloop()``). The poll callback itself runs on the GUI
     thread (scheduled via ``after`` from the main thread), so it is safe.
+
+    The default timeout is intentionally generous (20s) rather than tuned
+    to the fast path: under ``pytest-cov`` line-tracing every hashing and
+    SQLite call in ``core``/``storage`` slows the background worker thread
+    down substantially, and a too-tight timeout here does not mean the
+    background task is stuck -- it means the main thread gave up on it
+    early. Giving up early is actively harmful: it calls ``window.quit()``
+    while the background thread may still be about to invoke ``self.after``
+    for real, which then races the now-stopped mainloop and raises "main
+    thread is not in main loop" on a daemon thread pytest reports as an
+    unrelated failure in whichever test happens to be running when it
+    surfaces. A single test run (no coverage) never needed anywhere near
+    5s; 20s leaves ample headroom under instrumentation without masking a
+    genuine hang (a real deadlock would still exceed it).
     """
     deadline = time.monotonic() + timeout
 
