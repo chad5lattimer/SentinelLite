@@ -8,11 +8,13 @@ symbolic links are not followed.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import stat
 
 import pytest
 
+import core.filesystem as filesystem_module
 from core.filesystem import scan_directory
 from core.models import FileError, FileRecord
 
@@ -143,3 +145,62 @@ def test_scan_directory_empty_directory_returns_no_records(tmp_path):
 
     assert records == []
     assert errors == []
+
+
+def test_scan_directory_logs_warning_when_directory_cannot_be_listed(tmp_path, monkeypatch, caplog):
+    """Covers the ``onerror`` callback passed to ``os.walk`` (section 8's
+    "a permission error must not terminate the scan").
+
+    ``test_scan_directory_continues_after_permission_error`` above exercises
+    this behavior via a real ``chmod(0)``, but that test correctly
+    ``pytest.skip()``s when running as root (permission bits aren't
+    enforced), which is how this container and CI both run -- so the
+    ``onerror`` callback itself was never actually invoked by any test.
+    Monkeypatching ``os.walk`` to call it directly exercises the real
+    callback regardless of the user the tests run as.
+    """
+    _write(tmp_path / "readable.txt", b"ok")
+
+    real_walk = os.walk
+
+    def fake_walk(root, onerror=None, followlinks=False):
+        if onerror is not None:
+            onerror(OSError(13, "Permission denied (simulated)", str(tmp_path / "blocked")))
+        yield from real_walk(root, onerror=onerror, followlinks=followlinks)
+
+    monkeypatch.setattr(filesystem_module.os, "walk", fake_walk)
+
+    with caplog.at_level(logging.WARNING, logger="core.filesystem"):
+        records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert errors == []
+    assert any("Cannot list directory" in message for message in caplog.messages)
+
+
+def test_scan_directory_records_error_when_hashing_raises_oserror(tmp_path, monkeypatch):
+    """Covers the ``except OSError`` branch around hashing/``stat()`` in
+    ``scan_directory`` for a file that enumerates fine but fails to read.
+
+    Same rationale as the ``os.walk`` test above: the existing chmod-based
+    test for this path skips under root, so this monkeypatches the hashing
+    seam directly to exercise the branch unconditionally.
+    """
+    _write(tmp_path / "readable.txt", b"ok")
+    _write(tmp_path / "unreadable.txt", b"secret")
+
+    real_hash = filesystem_module.calculate_sha256
+
+    def fake_hash(path, **kwargs):
+        if path.name == "unreadable.txt":
+            raise OSError(13, "Permission denied (simulated)", str(path))
+        return real_hash(path, **kwargs)
+
+    monkeypatch.setattr(filesystem_module, "calculate_sha256", fake_hash)
+
+    records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert {error.path for error in errors} == {"unreadable.txt"}
+    assert isinstance(errors[0], FileError)
+    assert "Permission denied" in errors[0].message
