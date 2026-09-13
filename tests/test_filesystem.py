@@ -81,6 +81,61 @@ def test_scan_directory_continues_after_permission_error(tmp_path):
     assert isinstance(errors[0], FileError)
 
 
+def test_scan_directory_continues_after_unlistable_directory(tmp_path, monkeypatch, caplog):
+    """Exercises the ``os.walk`` ``onerror`` callback (a directory that
+    cannot be listed) directly, so this branch is covered even in
+    environments -- such as this container, which runs as root -- where a
+    real chmod-based permission error is not enforced by the OS."""
+    import core.filesystem as filesystem
+
+    _write(tmp_path / "readable.txt", b"ok")
+
+    real_walk = os.walk
+
+    def fake_walk(root, onerror=None, **kwargs):
+        if onerror is not None:
+            onerror(OSError(13, "Permission denied", str(tmp_path / "Blocked")))
+        yield from real_walk(root, onerror=onerror, **kwargs)
+
+    monkeypatch.setattr(filesystem.os, "walk", fake_walk)
+
+    with caplog.at_level("WARNING"):
+        records, errors = scan_directory(tmp_path)
+
+    assert errors == []
+    assert {record.path for record in records} == {"readable.txt"}
+    assert any("Cannot list directory" in message for message in caplog.messages)
+
+
+def test_scan_directory_records_error_for_unreadable_file(tmp_path, monkeypatch):
+    """Exercises the OSError-during-hashing branch (PROJECT_SPEC.md
+    section 7.3 / 8.3) via a monkeypatched hasher rather than a real
+    permission error, for the same root-user reason as above."""
+    import core.filesystem as filesystem
+
+    _write(tmp_path / "readable.txt", b"ok")
+    _write(tmp_path / "blocked.txt", b"secret")
+
+    real_hash = filesystem.calculate_sha256
+
+    def fake_hash(file_path, **kwargs):
+        if file_path.name == "blocked.txt":
+            raise PermissionError(13, "Permission denied", str(file_path))
+        return real_hash(file_path, **kwargs)
+
+    monkeypatch.setattr(filesystem, "calculate_sha256", fake_hash)
+
+    records, errors = scan_directory(tmp_path)
+
+    readable_paths = {record.path for record in records}
+    error_paths = {error.path for error in errors}
+
+    assert readable_paths == {"readable.txt"}
+    assert error_paths == {"blocked.txt"}
+    assert isinstance(errors[0], FileError)
+    assert "Permission denied" in errors[0].message
+
+
 def test_scan_directory_does_not_follow_symlinked_directories(tmp_path):
     if os.name == "nt":
         pytest.skip("Symlinks require elevated privileges on Windows.")

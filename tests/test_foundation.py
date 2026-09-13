@@ -48,6 +48,71 @@ def test_app_paths_resolve_under_tmp(tmp_path, monkeypatch):
     importlib.reload(config)
 
 
+def test_default_app_data_dir_windows_uses_localappdata(monkeypatch, tmp_path):
+    """PROJECT_SPEC.md section 22 requires resolving to %LOCALAPPDATA% on
+    Windows. This branch only runs on real Windows in normal use, but the
+    selection logic itself -- given a platform and environment -- is a
+    pure function that can and should be exercised directly on any OS."""
+    import config
+
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+
+    data_dir = config._default_app_data_dir()
+
+    assert data_dir == tmp_path / "AppData" / "Local" / config.APP_NAME
+
+
+def test_default_app_data_dir_macos_uses_application_support(monkeypatch):
+    import config
+
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "darwin")
+
+    data_dir = config._default_app_data_dir()
+
+    assert data_dir == config.Path.home() / "Library" / "Application Support" / config.APP_NAME
+
+
+def test_default_app_data_dir_windows_without_localappdata_uses_home(monkeypatch):
+    """When %LOCALAPPDATA% is unset, fall back to a home-relative path
+    rather than raising or resolving to a bogus location."""
+    import config
+
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "win32")
+
+    data_dir = config._default_app_data_dir()
+
+    assert data_dir == config.Path.home() / "AppData" / "Local" / config.APP_NAME
+
+
+def test_default_app_data_dir_linux_respects_xdg_data_home(monkeypatch, tmp_path):
+    import config
+
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    data_dir = config._default_app_data_dir()
+
+    assert data_dir == tmp_path / "xdg" / config.APP_NAME
+
+
+def test_default_app_data_dir_linux_without_xdg_uses_home_local_share(monkeypatch):
+    import config
+
+    monkeypatch.delenv("SENTINELLITE_DATA_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "linux")
+
+    data_dir = config._default_app_data_dir()
+
+    assert data_dir == config.Path.home() / ".local" / "share" / config.APP_NAME
+
+
 def test_configure_logging_creates_log_file(tmp_path):
     import config
 
