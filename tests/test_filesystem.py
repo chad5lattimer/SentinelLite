@@ -8,11 +8,13 @@ symbolic links are not followed.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import stat
 
 import pytest
 
+import core.filesystem
 from core.filesystem import scan_directory
 from core.models import FileError, FileRecord
 
@@ -79,6 +81,64 @@ def test_scan_directory_continues_after_permission_error(tmp_path):
     assert "readable.txt" in readable_paths
     assert "blocked.txt" in error_paths
     assert isinstance(errors[0], FileError)
+
+
+def test_iter_file_paths_logs_and_continues_when_a_subdirectory_cannot_be_listed(
+    tmp_path, monkeypatch, caplog
+):
+    """Covers the os.walk `onerror` callback (section 8.3): a directory
+    that cannot be listed must be logged and skipped, not abort the scan.
+    The existing chmod-based permission test above correctly skips when
+    running as root, so this reaches the same branch by monkeypatching
+    os.walk itself -- the seam core.filesystem already calls through --
+    to simulate the error os.walk would report for an unlistable
+    directory, without depending on real permission enforcement."""
+    _write(tmp_path / "readable.txt", b"ok")
+    real_walk = os.walk
+
+    def fake_walk(root, onerror=None, followlinks=False):
+        if onerror is not None:
+            onerror(OSError(13, "Permission denied", str(tmp_path / "blocked_dir")))
+        yield from real_walk(root, onerror=onerror, followlinks=followlinks)
+
+    monkeypatch.setattr(core.filesystem.os, "walk", fake_walk)
+
+    with caplog.at_level(logging.WARNING):
+        records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert errors == []
+    assert any("Cannot list directory" in message for message in caplog.messages)
+
+
+def test_scan_directory_records_error_when_hashing_raises_oserror(tmp_path, monkeypatch, caplog):
+    """Covers scan_directory's OSError handling around hashing (section
+    7.3): a file that raises during hashing (e.g. permission denied,
+    removed mid-scan) must be recorded as a FileError and logged, and
+    the scan must continue with the remaining files. Reached by
+    monkeypatching calculate_sha256 -- the seam scan_directory already
+    calls through -- rather than relying on real permission enforcement,
+    which the chmod-based test above cannot exercise as root."""
+    _write(tmp_path / "a.txt", b"a")
+    _write(tmp_path / "unreadable.txt", b"secret")
+
+    real_hash = core.filesystem.calculate_sha256
+
+    def fake_hash(path, **kwargs):
+        if path.name == "unreadable.txt":
+            raise OSError(13, "Permission denied", str(path))
+        return real_hash(path, **kwargs)
+
+    monkeypatch.setattr(core.filesystem, "calculate_sha256", fake_hash)
+
+    with caplog.at_level(logging.WARNING):
+        records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"a.txt"}
+    assert len(errors) == 1
+    assert errors[0].path == "unreadable.txt"
+    assert isinstance(errors[0], FileError)
+    assert any("Could not read file" in message for message in caplog.messages)
 
 
 def test_scan_directory_does_not_follow_symlinked_directories(tmp_path):
