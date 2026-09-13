@@ -8,11 +8,14 @@ symbolic links are not followed.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
+import core.filesystem as filesystem_module
 from core.filesystem import scan_directory
 from core.models import FileError, FileRecord
 
@@ -79,6 +82,63 @@ def test_scan_directory_continues_after_permission_error(tmp_path):
     assert "readable.txt" in readable_paths
     assert "blocked.txt" in error_paths
     assert isinstance(errors[0], FileError)
+
+
+def test_scan_directory_records_error_for_unreadable_file(tmp_path, caplog, monkeypatch):
+    """Same outcome as test_scan_directory_continues_after_permission_error
+    (PROJECT_SPEC.md section 7.3), but reached by monkeypatching the
+    hashing seam instead of a real chmod -- so it runs regardless of
+    whether the test process happens to be root (that test correctly
+    skips there, since permission bits aren't enforced for root)."""
+    _write(tmp_path / "readable.txt", b"ok")
+    _write(tmp_path / "unreadable.txt", b"secret")
+
+    real_hash = filesystem_module.calculate_sha256
+
+    def fake_hash(path, **kwargs):
+        if path.name == "unreadable.txt":
+            raise OSError("Permission denied")
+        return real_hash(path, **kwargs)
+
+    monkeypatch.setattr(filesystem_module, "calculate_sha256", fake_hash)
+
+    with caplog.at_level(logging.WARNING, logger="core.filesystem"):
+        records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert {error.path for error in errors} == {"unreadable.txt"}
+    assert isinstance(errors[0], FileError)
+    assert any("Could not read file" in message for message in caplog.messages)
+
+
+def test_scan_directory_logs_and_continues_after_unlistable_directory(tmp_path, caplog, monkeypatch):
+    """The os.walk(onerror=...) branch (a subdirectory that cannot be
+    listed) is logged and skipped rather than aborting enumeration.
+    Simulated via monkeypatch for the same root-user reason as above --
+    real permission bits on a directory aren't enforced for root either."""
+    _write(tmp_path / "readable.txt", b"ok")
+    (tmp_path / "unlistable").mkdir()
+
+    real_walk = os.walk
+
+    def fake_walk(root, onerror=None, followlinks=False):
+        for dirpath, dirnames, filenames in real_walk(root, followlinks=followlinks):
+            if Path(dirpath) == tmp_path / "unlistable":
+                if onerror is not None:
+                    error = OSError("Permission denied")
+                    error.filename = dirpath
+                    onerror(error)
+                continue
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(filesystem_module.os, "walk", fake_walk)
+
+    with caplog.at_level(logging.WARNING, logger="core.filesystem"):
+        records, errors = scan_directory(tmp_path)
+
+    assert {record.path for record in records} == {"readable.txt"}
+    assert errors == []
+    assert any("Cannot list directory" in message for message in caplog.messages)
 
 
 def test_scan_directory_does_not_follow_symlinked_directories(tmp_path):
