@@ -40,5 +40,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover -- only runs as `python app.py`
     sys.exit(main())

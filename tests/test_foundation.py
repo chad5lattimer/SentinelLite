@@ -4,6 +4,11 @@ Covers: configuration/paths, logging setup, and that the application can
 build its main window and enter/exit the GUI event loop without errors.
 No filesystem-scanning or hashing behavior is tested here -- that arrives
 with the core engine in later runs.
+
+Also covers `app.py`'s `main()` -- the real process entry point
+(`app.py:44` calls it via `sys.exit(main())`). It is exercised here with
+`MainWindow` replaced by a fake so the suite never opens a real GUI event
+loop or touches a real per-user database (PROJECT_SPEC.md section 22).
 """
 
 from __future__ import annotations
@@ -159,3 +164,65 @@ def test_main_window_builds_and_closes(tmp_path):
         assert str(window.create_baseline_button.cget("state")) == "disabled"
     finally:
         window._on_close()
+
+
+def test_main_builds_window_and_runs_mainloop(monkeypatch):
+    """app.main() should build a MainWindow, run its event loop, and
+    return exit code 0 -- without ever needing a real display."""
+    # app.py imports gui.main_window, which imports customtkinter (and
+    # thus tkinter) at module level -- skip where neither is installed,
+    # same as test_main_window_builds_and_closes above.
+    pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
+    import app
+
+    calls = []
+
+    class FakeWindow:
+        def mainloop(self):
+            calls.append("mainloop")
+
+    monkeypatch.setattr(app, "MainWindow", lambda: FakeWindow())
+
+    exit_code = app.main()
+
+    assert exit_code == 0
+    assert calls == ["mainloop"]
+
+
+def test_main_reraises_and_logs_if_main_window_creation_fails(monkeypatch, caplog):
+    """A failure constructing the main window (e.g. no display, a broken
+    Tk installation) must be logged and re-raised rather than swallowed --
+    it is a fatal startup error, not something main() can recover from."""
+    pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
+    import app
+
+    def boom():
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr(app, "MainWindow", boom)
+
+    with caplog.at_level(logging.ERROR, logger="app"):
+        with pytest.raises(RuntimeError, match="no display"):
+            app.main()
+
+    assert "Failed to create the main window." in caplog.text
+
+
+def test_main_logs_shutdown_even_if_mainloop_raises(monkeypatch):
+    """The 'shutting down' log message (app.py's finally block) must run
+    even when the GUI event loop itself raises, so shutdown is always
+    recorded in the log for later debugging."""
+    pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
+    import app
+
+    class FakeWindow:
+        def mainloop(self):
+            raise RuntimeError("event loop crashed")
+
+    monkeypatch.setattr(app, "MainWindow", lambda: FakeWindow())
+
+    with pytest.raises(RuntimeError, match="event loop crashed"):
+        app.main()
