@@ -137,6 +137,63 @@ def test_configure_logging_creates_log_file(tmp_path):
         config._LOGGING_CONFIGURED = False
 
 
+def test_app_main_configures_logging_builds_window_and_runs_loop(monkeypatch, tmp_path):
+    """app.main() (Run 1's entry point) should configure logging once,
+    build exactly one MainWindow, and hand control to its event loop --
+    without this test, app.py itself was never imported by the suite and
+    sat at 0% coverage. Both collaborators are monkeypatched at the seam
+    app.py calls through, matching the pattern used for the GUI/core
+    seams elsewhere (e.g. test_gui_integration.py), so this never builds
+    a real Tk window or touches the real per-user app data directory."""
+    pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
+    import app
+
+    calls = []
+
+    def fake_configure_logging():
+        calls.append("configure_logging")
+        return tmp_path / "sentinellite.log"
+
+    class FakeWindow:
+        def __init__(self):
+            calls.append("window_created")
+
+        def mainloop(self):
+            calls.append("mainloop")
+
+    monkeypatch.setattr(app, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(app, "MainWindow", FakeWindow)
+
+    exit_code = app.main()
+
+    assert exit_code == 0
+    assert calls == ["configure_logging", "window_created", "mainloop"]
+
+
+def test_app_main_logs_and_reraises_when_window_creation_fails(monkeypatch, tmp_path):
+    """A failure building the main window (e.g. no display) must be
+    logged, per section 16's 'Errors' logging requirement, and then
+    re-raised rather than swallowed -- app.py has no fallback UI to fall
+    back to."""
+    pytest.importorskip("tkinter")
+    pytest.importorskip("customtkinter")
+    import app
+
+    monkeypatch.setattr(
+        app, "configure_logging", lambda: tmp_path / "sentinellite.log"
+    )
+
+    class FailingWindow:
+        def __init__(self):
+            raise RuntimeError("no display available")
+
+    monkeypatch.setattr(app, "MainWindow", FailingWindow)
+
+    with pytest.raises(RuntimeError, match="no display available"):
+        app.main()
+
+
 def test_main_window_builds_and_closes(tmp_path):
     tk = pytest.importorskip("tkinter")
     pytest.importorskip("customtkinter")
