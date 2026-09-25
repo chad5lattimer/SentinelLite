@@ -12,8 +12,6 @@ missing-baseline and corrupted-baseline handling.
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 from core.baseline import (
