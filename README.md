@@ -23,8 +23,10 @@ specification and development plan.
 > packaged with `--windowed`, which has no console). `build_exe.bat`
 > packages the app with PyInstaller; the section 33 Final Acceptance Test
 > passes end-to-end through the real GUI, exports included. Optional
-> Windows scheduled scanning was deferred (see
-> `status/status_2026-09-10.md`). See [`status/`](status/) for per-run
+> Windows scheduled scanning now has a backend: `core/scheduler.py`
+> registers a Task Scheduler job that runs `SentinelLite.exe
+> --scheduled-scan` (headless scan of every baselined folder, JSON report
+> per folder in the exports directory); the GUI panel is still pending. See [`status/`](status/) for per-run
 > progress notes.
 
 ## Requirements

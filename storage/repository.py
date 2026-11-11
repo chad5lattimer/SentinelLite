@@ -258,3 +258,15 @@ def list_scans(connection: sqlite3.Connection, baseline_id: int | None = None) -
         )
         for row in rows
     ]
+
+
+def list_baseline_directories(connection: sqlite3.Connection) -> list[str]:
+    """Return every distinct monitored root directory that has a baseline.
+
+    Used by scheduled (headless) scans, which re-scan each previously
+    baselined folder against that folder's most recent baseline.
+    """
+    rows = connection.execute(
+        "SELECT root_directory FROM baselines GROUP BY root_directory ORDER BY MIN(id)"
+    ).fetchall()
+    return [row["root_directory"] for row in rows]

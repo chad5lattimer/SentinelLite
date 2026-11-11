@@ -127,3 +127,14 @@ def test_entrypoint_guard_calls_main_and_exits_with_its_return_code(monkeypatch,
     assert exit_codes == [0]
     assert len(windows_created) == 1
     assert windows_created[0].mainloop_called
+
+
+def test_main_scheduled_scan_flag_runs_headless_without_window(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "configure_logging", lambda: tmp_path / "log")
+
+    def no_window():
+        raise AssertionError("GUI must not open for --scheduled-scan")
+
+    monkeypatch.setattr(app, "MainWindow", no_window)
+    monkeypatch.setattr(app, "run_headless_scheduled_scan", lambda: 0)
+    assert app.main(["--scheduled-scan"]) == 0
