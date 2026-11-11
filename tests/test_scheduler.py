@@ -196,3 +196,89 @@ def test_list_baseline_directories_is_distinct(tmp_path):
     _baseline(db_path, root)
     with connect(db_path) as connection:
         assert repository.list_baseline_directories(connection) == [str(root.resolve())]
+
+
+# ---------------------------------------------------------------------------
+# GUI-facing helpers: time parsing, settings persistence, apply_schedule
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("02:00 AM", "02:00"),
+        ("2:00 am", "02:00"),
+        ("12:00 AM", "00:00"),
+        ("12:30 PM", "12:30"),
+        ("11:45 pm", "23:45"),
+        ("14:05", "14:05"),
+        ("0:00", "00:00"),
+    ],
+)
+def test_parse_display_time_accepts_12h_and_24h(text, expected):
+    assert scheduler.parse_display_time(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "noon", "24:00", "13:00 PM", "0:00 AM", "2:60 AM", "2 AM"])
+def test_parse_display_time_rejects_invalid(text):
+    with pytest.raises(ValueError):
+        scheduler.parse_display_time(text)
+
+
+@pytest.mark.parametrize(
+    "time_24h, expected", [("00:00", "12:00 AM"), ("02:00", "02:00 AM"), ("12:15", "12:15 PM"), ("23:59", "11:59 PM")]
+)
+def test_format_display_time_round_trips(time_24h, expected):
+    assert scheduler.format_display_time(time_24h) == expected
+    assert scheduler.parse_display_time(expected) == time_24h
+
+
+def test_load_schedule_settings_defaults_when_missing_or_corrupt(tmp_path):
+    assert scheduler.load_schedule_settings(tmp_path / "missing.json") == scheduler.ScheduleSettings()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert scheduler.load_schedule_settings(bad) == scheduler.ScheduleSettings()
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text(json.dumps({"enabled": True, "frequency": "Hourly"}), encoding="utf-8")
+    assert scheduler.load_schedule_settings(invalid) == scheduler.ScheduleSettings()
+
+
+def test_save_and_load_schedule_settings_round_trip(tmp_path):
+    path = tmp_path / "nested" / "schedule.json"
+    settings = scheduler.ScheduleSettings(True, ScheduleConfig("Weekly", "21:30"))
+    scheduler.save_schedule_settings(path, settings)
+    assert scheduler.load_schedule_settings(path) == settings
+
+
+def test_apply_schedule_enabled_installs_and_persists(tmp_path):
+    runner = FakeRunner()
+    path = tmp_path / "schedule.json"
+    settings = scheduler.ScheduleSettings(True, ScheduleConfig("Daily", "03:15"))
+    scheduler.apply_schedule(settings, path, runner=runner, launch_command=["app.exe"])
+    assert runner.calls[0][0][:2] == ["schtasks", "/Create"]
+    assert scheduler.load_schedule_settings(path) == settings
+
+
+def test_apply_schedule_disabled_removes_existing_task(tmp_path):
+    runner = FakeRunner(returncode=0)
+    path = tmp_path / "schedule.json"
+    scheduler.apply_schedule(scheduler.ScheduleSettings(False), path, runner=runner)
+    commands = [call[0][1] for call in runner.calls]
+    assert commands == ["/Query", "/Delete"]
+    assert scheduler.load_schedule_settings(path).enabled is False
+
+
+def test_apply_schedule_disabled_without_task_is_noop(tmp_path):
+    runner = FakeRunner(returncode=1)
+    path = tmp_path / "schedule.json"
+    scheduler.apply_schedule(scheduler.ScheduleSettings(False), path, runner=runner)
+    assert [call[0][1] for call in runner.calls] == ["/Query"]
+    assert path.exists()
+
+
+def test_apply_schedule_failure_does_not_persist(tmp_path):
+    runner = FakeRunner(returncode=1, stderr="Access is denied.")
+    path = tmp_path / "schedule.json"
+    with pytest.raises(SchedulerError, match="Access is denied"):
+        scheduler.apply_schedule(scheduler.ScheduleSettings(True), path, runner=runner)
+    assert not path.exists()

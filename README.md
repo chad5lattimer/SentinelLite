@@ -26,7 +26,8 @@ specification and development plan.
 > Windows scheduled scanning now has a backend: `core/scheduler.py`
 > registers a Task Scheduler job that runs `SentinelLite.exe
 > --scheduled-scan` (headless scan of every baselined folder, JSON report
-> per folder in the exports directory); the GUI panel is still pending. See [`status/`](status/) for per-run
+> per folder in the exports directory), configured from the "Scheduled Scans"
+> button in the main window. See [`status/`](status/) for per-run
 > progress notes.
 
 ## Requirements

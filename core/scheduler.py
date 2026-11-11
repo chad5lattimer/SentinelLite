@@ -22,6 +22,7 @@ failure cannot compromise the core application (section 20).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -140,6 +141,90 @@ def remove_schedule(runner: Runner | None = None) -> None:
 def is_schedule_installed(runner: Runner | None = None) -> bool:
     """Return True if the scheduled scan task exists."""
     return _execute(build_query_command(), runner).returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# GUI-facing helpers (toolkit-free so they are testable without a display)
+# ---------------------------------------------------------------------------
+
+#: Filename (inside the app data dir) remembering the user's last saved choice.
+SETTINGS_FILENAME: str = "schedule.json"
+
+_DISPLAY_TIME_PATTERN = re.compile(r"^\s*(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])?\s*$")
+
+
+def parse_display_time(text: str) -> str:
+    """Convert user input such as ``"2:00 AM"``, ``"02:00 pm"`` or ``"14:30"``
+    into 24-hour ``HH:MM``. Raises ``ValueError`` for anything else."""
+    match = _DISPLAY_TIME_PATTERN.match(text or "")
+    if not match:
+        raise ValueError(f"Invalid time {text!r}; use e.g. 02:00 AM or 14:00.")
+    hour, minute, meridiem = int(match.group(1)), match.group(2), match.group(3)
+    if meridiem:
+        if not 1 <= hour <= 12:
+            raise ValueError(f"Invalid time {text!r}; hour must be 1-12 with AM/PM.")
+        hour = hour % 12 + (12 if meridiem.upper() == "PM" else 0)
+    elif hour > 23:
+        raise ValueError(f"Invalid time {text!r}; hour must be 0-23.")
+    return f"{hour:02d}:{minute}"
+
+
+def format_display_time(time_24h: str) -> str:
+    """Render 24-hour ``HH:MM`` as ``"02:00 AM"`` for the GUI."""
+    hour, minute = (int(part) for part in time_24h.split(":"))
+    meridiem = "AM" if hour < 12 else "PM"
+    return f"{(hour % 12) or 12:02d}:{minute:02d} {meridiem}"
+
+
+@dataclass(frozen=True)
+class ScheduleSettings:
+    """What the "Scheduled Scans" panel shows: enabled flag plus config."""
+
+    enabled: bool = False
+    config: ScheduleConfig = ScheduleConfig()
+
+
+def load_schedule_settings(path: Path) -> ScheduleSettings:
+    """Load saved settings, falling back to defaults if missing or corrupt."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        return ScheduleSettings(
+            enabled=bool(raw.get("enabled", False)),
+            config=ScheduleConfig(raw.get("frequency", "Daily"), raw.get("time", "02:00")),
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ScheduleSettings()
+
+
+def save_schedule_settings(path: Path, settings: ScheduleSettings) -> None:
+    payload = {
+        "enabled": settings.enabled,
+        "frequency": settings.config.frequency,
+        "time": settings.config.time,
+    }
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def apply_schedule(
+    settings: ScheduleSettings,
+    settings_path: Path,
+    runner: Runner | None = None,
+    launch_command: Sequence[str] | None = None,
+) -> None:
+    """Install or remove the scheduled task to match ``settings``, then
+    persist them. Raises ``SchedulerError`` (settings unchanged) on failure.
+
+    Disabling when no task exists is a no-op rather than an error.
+    """
+    if settings.enabled:
+        install_schedule(settings.config, runner=runner, launch_command=launch_command)
+    elif is_schedule_installed(runner=runner):
+        remove_schedule(runner=runner)
+    try:
+        save_schedule_settings(settings_path, settings)
+    except OSError as error:
+        raise SchedulerError(f"Schedule applied, but settings could not be saved: {error}") from error
 
 
 @dataclass(frozen=True)

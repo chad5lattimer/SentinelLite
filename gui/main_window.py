@@ -37,8 +37,10 @@ from core.baseline import (
 )
 from core.models import ScanStatus
 from core.scanner import ScanResult, run_scan, save_scan
+from core.scheduler import SETTINGS_FILENAME
 from gui import dialogs
 from gui.results_view import ResultsView
+from gui.schedule_dialog import ScheduleDialog
 from reports import exporter
 from storage.database import connect as connect_db
 from storage.database import get_connection
@@ -161,6 +163,13 @@ class MainWindow(ctk.CTk):
             text_color=("gray40", "gray70"),
         ).grid(row=1, column=0, padx=20, pady=(0, 16), sticky="w")
 
+        # Optional scheduled scanning (section 20) lives in its own window so
+        # it cannot interfere with the core baseline/scan workflow.
+        self.schedule_button = ctk.CTkButton(
+            header, text="Scheduled Scans", width=140, command=self._on_scheduled_scans
+        )
+        self.schedule_button.grid(row=0, column=1, rowspan=2, padx=20, pady=16, sticky="e")
+
     def _build_directory_section(self) -> None:
         section = ctk.CTkFrame(self)
         section.grid(row=1, column=0, padx=20, pady=(10, 10), sticky="ew")
@@ -257,6 +266,15 @@ class MainWindow(ctk.CTk):
             font=ctk.CTkFont(size=14, weight="bold"),
         )
         self.status_label.grid(row=0, column=0, padx=16, pady=16)
+
+    # ------------------------------------------------------------------
+    # Scheduled scans (optional, section 20)
+    # ------------------------------------------------------------------
+
+    def _on_scheduled_scans(self) -> ScheduleDialog:
+        dialog = ScheduleDialog(self, settings_path=self._db_path.parent / SETTINGS_FILENAME)
+        dialog.focus()
+        return dialog
 
     # ------------------------------------------------------------------
     # Folder selection

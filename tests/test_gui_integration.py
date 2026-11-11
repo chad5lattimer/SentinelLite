@@ -667,3 +667,38 @@ def test_results_view_sort_by_column_toggles_order(gui_window):
     view._sort_by("file")
     descending = [view.tree.item(row)["values"][1] for row in view.tree.get_children()]
     assert descending == ["c.txt", "b.txt", "a.txt"]
+
+
+def test_scheduled_scans_dialog_saves_via_apply(tmp_path, gui_window, monkeypatch):
+    from core.scheduler import ScheduleConfig, ScheduleSettings
+    from gui.schedule_dialog import ScheduleDialog
+
+    applied = []
+    dialog = ScheduleDialog(gui_window, tmp_path / "schedule.json", apply=lambda s, p: applied.append((s, p)))
+    dialog.enabled_var.set(True)
+    dialog.frequency_var.set("Weekly")
+    dialog.time_var.set("9:30 PM")
+    assert dialog._on_save() is True
+    assert applied == [(ScheduleSettings(True, ScheduleConfig("Weekly", "21:30")), tmp_path / "schedule.json")]
+
+
+def test_scheduled_scans_dialog_rejects_invalid_time(tmp_path, gui_window):
+    from gui.schedule_dialog import ScheduleDialog
+
+    applied = []
+    dialog = ScheduleDialog(gui_window, tmp_path / "schedule.json", apply=lambda s, p: applied.append(s))
+    dialog.time_var.set("25:00")
+    try:
+        assert dialog._on_save() is False
+        assert applied == []
+    finally:
+        dialog.destroy()
+
+
+def test_scheduled_scans_button_opens_dialog(gui_window):
+    dialog = gui_window._on_scheduled_scans()
+    try:
+        assert dialog.winfo_exists()
+        assert dialog.time_var.get() == "02:00 AM"
+    finally:
+        dialog.destroy()

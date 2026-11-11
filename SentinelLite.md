@@ -748,7 +748,9 @@ However, this feature must not compromise the core application.
 
 If Run 6 cannot implement it reliably, defer it.
 
-Implementation status (2026-11-11): backend done -- core/scheduler.py builds and runs schtasks /Create, /Delete and /Query for the task "SentinelLite Scheduled Scan" (Daily/Weekly, HH:MM), and `SentinelLite.exe --scheduled-scan` runs a headless scan of every baselined folder, saving scan history and a JSON report per folder to the exports directory (tests/test_scheduler.py). Remaining: the GUI "Scheduled Scans" panel (enable checkbox, frequency, time, Save Schedule) wired to install_schedule/remove_schedule.
+Implementation status (2026-11-11): backend done -- core/scheduler.py builds and runs schtasks /Create, /Delete and /Query for the task "SentinelLite Scheduled Scan" (Daily/Weekly, HH:MM), and `SentinelLite.exe --scheduled-scan` runs a headless scan of every baselined folder, saving scan history and a JSON report per folder to the exports directory (tests/test_scheduler.py).
+
+Implementation status (2026-11-11 run 5): GUI done -- a "Scheduled Scans" header button opens gui/schedule_dialog.py (enable checkbox, Daily/Weekly frequency, time accepting "02:00 AM" or "14:00", Save Schedule). Saving calls core.scheduler.apply_schedule, which installs or removes the task and persists the choice to schedule.json in the app data dir; errors (e.g. Access is denied) show a dialog and never touch the core scan path. Section 20 is complete; only a manual check of schtasks on real Windows remains.
 
 21. Packaging
 Use PyInstaller.
