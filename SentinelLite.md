@@ -752,6 +752,8 @@ Implementation status (2026-11-11): backend done -- core/scheduler.py builds and
 
 Implementation status (2026-11-11 run 5): GUI done -- a "Scheduled Scans" header button opens gui/schedule_dialog.py (enable checkbox, Daily/Weekly frequency, time accepting "02:00 AM" or "14:00", Save Schedule). Saving calls core.scheduler.apply_schedule, which installs or removes the task and persists the choice to schedule.json in the app data dir; errors (e.g. Access is denied) show a dialog and never touch the core scan path. Section 20 is complete; only a manual check of schtasks on real Windows remains.
 
+Verification (2026-11-12): the full suite, including all GUI tests and the three Scheduled Scans dialog tests, was run for the first time with Tk under Xvfb on Linux: 154 passed, 4 skipped (permission-bit tests that cannot run as root). A rendered screenshot of the dialog matches the layout above. The only check still outstanding is a real schtasks install on Windows.
+
 21. Packaging
 Use PyInstaller.
 
